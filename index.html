@@ -167,6 +167,45 @@ button { cursor: pointer; border: none; background: none; }
 .goal-buy { margin-top: 10px; width: 100%; min-height: 44px; border-radius: 12px; background: var(--accent);
   color: #fff; font-weight: 800; }
 .goal-achieved-label { font-size: .85rem; color: var(--muted); font-weight: 700; margin-top: 4px; }
+
+.cat-section { margin-bottom: 10px; background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+.cat-header { width: 100%; display: flex; align-items: center; gap: 10px; padding: 14px 14px; text-align: left;
+  font-weight: 800; font-size: 1.05rem; color: var(--ink); background: transparent; }
+.cat-header:active { background: #EEF2FF; }
+.cat-emoji { font-size: 1.35rem; width: 36px; text-align: center; }
+.cat-title { flex: 1; }
+.cat-count { color: var(--muted); font-size: .85rem; font-weight: 700; }
+.cat-chevron { color: var(--muted); font-size: 1.1rem; transition: transform .2s; }
+.cat-section.collapsed .cat-chevron { transform: rotate(-90deg); }
+.cat-section.collapsed .cat-body { display: none; }
+.cat-body { display: grid; gap: 8px; padding: 0 10px 12px; }
+.cat-body .chore-item { box-shadow: 0 2px 8px rgba(15,23,42,.06); }
+.cat-picker { display: flex; flex-wrap: wrap; gap: 8px; }
+.cat-pick { min-height: 42px; padding: 8px 12px; border-radius: 999px; background: #EEF2FF; color: var(--primary);
+  font-weight: 700; font-size: .9rem; border: 2px solid transparent; }
+.cat-pick.active { background: var(--primary); color: #fff; border-color: var(--primary-dark); }
+
+.icon-btn.spinning { animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.ptr-indicator { position: fixed; top: calc(8px + var(--safe-t)); left: 50%; transform: translateX(-50%) translateY(-80px);
+  background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 999px; font-weight: 800; font-size: .9rem;
+  z-index: 150; opacity: 0; transition: transform .2s, opacity .2s; pointer-events: none; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+.ptr-indicator.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+.today-bar { background: var(--card); border-radius: var(--radius); padding: 12px 16px; box-shadow: var(--shadow);
+  display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.today-bar strong { color: var(--primary); font-size: 1.05rem; }
+.chore-item.done-today { background: #ECFDF5; border: 2px solid #6EE7B7; }
+.chore-item.done-today .chore-emoji { background: #A7F3D0; }
+.chore-check { width: 28px; height: 28px; border-radius: 50%; border: 2px solid #C7D2FE; display: grid; place-items: center;
+  flex-shrink: 0; font-size: .95rem; color: transparent; background: #fff; }
+.chore-item.done-today .chore-check { background: #10B981; border-color: #059669; color: #fff; font-weight: 800; }
+.chore-count-badge { min-width: 28px; height: 28px; padding: 0 8px; border-radius: 999px; background: #10B981; color: #fff;
+  font-weight: 800; font-size: .85rem; display: grid; place-items: center; flex-shrink: 0; }
+.chore-done-label { color: #059669; font-size: .78rem; font-weight: 800; margin-top: 2px; }
+.cat-progress { color: var(--muted); font-size: .82rem; font-weight: 700; white-space: nowrap; }
+.field-check { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 4px 0; }
+.field-check input { width: 22px; height: 22px; accent-color: var(--primary); }
 </style>
 </head>
 <body>
@@ -174,6 +213,7 @@ button { cursor: pointer; border: none; background: none; }
   <div class="header">
     <div class="logo"><div class="logo-badge">✨</div><span>Chore Tracker</span></div>
     <div style="display:flex;gap:8px">
+      <button class="icon-btn" id="btnRefresh" title="Refresh app" aria-label="Refresh app">↻</button>
       <button class="icon-btn" id="btnMenu" title="Menu" aria-label="Menu">☰</button>
     </div>
   </div>
@@ -201,6 +241,10 @@ button { cursor: pointer; border: none; background: none; }
 
   <div id="tabChores">
     <div class="section">
+      <div class="today-bar" id="todayBar">
+        <span>Today: <strong id="todayProgress">0/0 chores</strong></span>
+        <strong id="todayEarned">$0.00 earned</strong>
+      </div>
       <div class="weekly">
         <span>This week earned</span>
         <strong id="weeklyEarned">$0.00</strong>
@@ -239,6 +283,7 @@ button { cursor: pointer; border: none; background: none; }
   </div>
 </div>
 
+<div class="ptr-indicator" id="ptrIndicator">↓ Refresh</div>
 <div class="toast" id="toast"><span id="toastMsg"></span><button id="toastUndo" class="hidden">Undo</button></div>
 
 <div class="modal-backdrop" id="modal">
@@ -247,25 +292,40 @@ button { cursor: pointer; border: none; background: none; }
 
 <script>
 const STORAGE_KEY = 'chore-tracker-v1';
-const CHORES_DATA_VERSION = 2;
-const DEFAULT_CHORES = [
-  { id: 'c1', name: 'Make bed', amount: 1, emoji: '🛏️' },
-  { id: 'c2', name: 'Take out trash', amount: 2, emoji: '🗑️' },
-  { id: 'c3', name: 'Clean room', amount: 3, emoji: '🧹' },
-  { id: 'c4', name: 'Set table', amount: 1, emoji: '🍽️' },
-  { id: 'c5', name: 'Put away toys', amount: 1, emoji: '🧸' },
-  { id: 'c6', name: 'Laundry (fold & put away)', amount: 2, emoji: '👕' },
-  { id: 'c7', name: 'Take out recycling', amount: 1, emoji: '♻️' },
-  { id: 'c8', name: 'Homework right after school', amount: 2, emoji: '📚' },
-  { id: 'c9', name: 'Clean up toys', amount: 1, emoji: '🪀' },
-  { id: 'c10', name: 'Slept in own bed', amount: 1, emoji: '😴' },
-  { id: 'c11', name: 'Clear table after dinner', amount: 1, emoji: '🍽️' },
-  { id: 'c12', name: 'Put shoes & backpack away', amount: 0.5, emoji: '🎒' },
-  { id: 'c13', name: 'Brush teeth morning & night', amount: 0.5, emoji: '🪥' },
-  { id: 'c14', name: 'Get dressed & ready on time', amount: 1, emoji: '👔' },
-  { id: 'c15', name: 'Help unload dishwasher', amount: 1, emoji: '🍽️' },
-  { id: 'c16', name: 'Read 20 minutes', amount: 1, emoji: '📖' },
+const CHORES_DATA_VERSION = 3;
+const CATEGORIES = [
+  { id: 'morning', name: 'Morning', emoji: '☀️' },
+  { id: 'afterschool', name: 'After School', emoji: '🎒' },
+  { id: 'evening', name: 'Evening', emoji: '🌙' },
+  { id: 'general', name: 'General', emoji: '🏠' },
+  { id: 'erevshabbos', name: 'Erev Shabbos', emoji: '🕯️' },
 ];
+const DEFAULT_CHORES = [
+  { id: 'c1', name: 'Make bed', amount: 1, emoji: '🛏️', category: 'morning' },
+  { id: 'c13', name: 'Brush teeth morning & night', amount: 0.5, emoji: '🪥', category: 'morning' },
+  { id: 'c14', name: 'Get dressed & ready on time', amount: 1, emoji: '👔', category: 'morning' },
+  { id: 'c8', name: 'Homework right after school', amount: 2, emoji: '📚', category: 'afterschool' },
+  { id: 'c12', name: 'Put shoes & backpack away', amount: 0.5, emoji: '🎒', category: 'afterschool' },
+  { id: 'c16', name: 'Read 20 minutes', amount: 1, emoji: '📖', category: 'afterschool' },
+  { id: 'c4', name: 'Set table', amount: 1, emoji: '🍽️', category: 'evening' },
+  { id: 'c11', name: 'Clear table after dinner', amount: 1, emoji: '🍽️', category: 'evening' },
+  { id: 'c10', name: 'Slept in own bed', amount: 1, emoji: '😴', category: 'evening' },
+  { id: 'c15', name: 'Help unload dishwasher', amount: 1, emoji: '🍽️', category: 'evening' },
+  { id: 'c2', name: 'Take out trash', amount: 2, emoji: '🗑️', category: 'general' },
+  { id: 'c7', name: 'Take out recycling', amount: 1, emoji: '♻️', category: 'general' },
+  { id: 'c3', name: 'Clean room', amount: 3, emoji: '🧹', category: 'general' },
+  { id: 'c9', name: 'Clean up toys', amount: 1, emoji: '🪀', category: 'general' },
+  { id: 'c5', name: 'Put away toys', amount: 1, emoji: '🧸', category: 'general' },
+  { id: 'c6', name: 'Laundry (fold & put away)', amount: 2, emoji: '👕', category: 'general' },
+  { id: 'c17', name: 'Off the iPad without whining', amount: 1, emoji: '📱', category: 'general' },
+  { id: 'c18', name: 'Set the Shabbos table', amount: 2, emoji: '🕯️', category: 'erevshabbos' },
+  { id: 'c19', name: 'Set out plates & cutlery', amount: 1, emoji: '🍴', category: 'erevshabbos' },
+  { id: 'c20', name: "Set up Mommy's candles", amount: 1, emoji: '🕎', category: 'erevshabbos' },
+  { id: 'c21', name: 'Shower & ready on time for Shabbos', amount: 2, emoji: '🚿', category: 'erevshabbos' },
+];
+const CATEGORY_BY_NAME = Object.fromEntries(
+  DEFAULT_CHORES.map(c => [c.name.trim().toLowerCase(), c.category])
+);
 const DEFAULT_KIDS = [
   { id: 'k1', name: 'Reuven', color: '#6366F1' },
   { id: 'k2', name: 'Lev', color: '#EC4899' },
@@ -287,6 +347,7 @@ function loadState(){
       const s = JSON.parse(raw);
       if (!s.kids || !s.chores || !s.entries) throw new Error('bad');
       if (!Array.isArray(s.goals)) s.goals = [];
+      if (!s.collapsedCategories || typeof s.collapsedCategories !== 'object') s.collapsedCategories = {};
       migrateChores(s);
       return s;
     }
@@ -299,21 +360,34 @@ function loadState(){
     selectedKidId: DEFAULT_KIDS[0].id,
     pinHash: null,
     choresDataVersion: CHORES_DATA_VERSION,
+    collapsedCategories: {},
   };
 }
 function migrateChores(s){
   const ver = Number(s.choresDataVersion) || 0;
-  if (ver >= CHORES_DATA_VERSION) return;
-  // Add any default chores missing by name (case-insensitive) exactly once.
-  // Never alter balances, history, or existing chores. Deleted chores won't return after version bump.
+  if (ver >= CHORES_DATA_VERSION) {
+    // Still normalize any missing category field defensively without re-adding deleted chores
+    for (const c of (s.chores || [])) {
+      if (!c.category) c.category = CATEGORY_BY_NAME[String(c.name||'').trim().toLowerCase()] || 'general';
+    }
+    return;
+  }
+  // Assign categories to existing chores by case-insensitive name (unknown -> General).
+  // Add any new default chores missing by name exactly once.
+  // Never alter balances, history, goals, or existing amounts.
+  for (const c of (s.chores || [])) {
+    const key = String(c.name || '').trim().toLowerCase();
+    if (!c.category) c.category = CATEGORY_BY_NAME[key] || 'general';
+  }
   const have = new Set((s.chores || []).map(c => String(c.name || '').trim().toLowerCase()));
   for (const def of DEFAULT_CHORES) {
     const key = def.name.trim().toLowerCase();
     if (!have.has(key)) {
-      s.chores.push({ id: uid('c'), name: def.name, amount: def.amount, emoji: def.emoji });
+      s.chores.push({ id: uid('c'), name: def.name, amount: def.amount, emoji: def.emoji, category: def.category });
       have.add(key);
     }
   }
+  if (!s.collapsedCategories || typeof s.collapsedCategories !== 'object') s.collapsedCategories = {};
   s.choresDataVersion = CHORES_DATA_VERSION;
 }
 function saveState(){
@@ -406,31 +480,170 @@ function renderKids(){
   });
   document.getElementById('btnAddKid').onclick = () => requireUnlock(() => openKidModal());
 }
-function renderChores(){
-  const el = document.getElementById('choreList');
-  if (!state.chores.length) {
-    el.innerHTML = '<div class="empty">No chores yet. Tap + Add.</div>';
-    return;
+function suggestedCategoryId(){
+  const now = new Date();
+  const day = now.getDay(); // 0 Sun .. 5 Fri
+  const hour = now.getHours();
+  if (day === 5) return 'erevshabbos'; // Friday → Erev Shabbos
+  if (hour < 12) return 'morning';
+  if (hour < 17) return 'afterschool';
+  return 'evening';
+}
+function isCategoryCollapsed(catId){
+  if (!state.collapsedCategories) state.collapsedCategories = {};
+  if (Object.prototype.hasOwnProperty.call(state.collapsedCategories, catId)) {
+    return !!state.collapsedCategories[catId];
   }
-  el.innerHTML = state.chores.map(c => `
-    <div class="chore-item" role="button" tabindex="0" data-chore="${c.id}">
+  // Default: expand suggested time-of-day section; collapse others
+  return catId !== suggestedCategoryId();
+}
+function toggleCategory(catId){
+  if (!state.collapsedCategories) state.collapsedCategories = {};
+  state.collapsedCategories[catId] = !isCategoryCollapsed(catId);
+  saveState();
+  renderChores();
+}
+
+function localDateKey(ts = Date.now()){
+  const d = new Date(ts);
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+function todaysChoreEntries(kidId, choreId){
+  const key = localDateKey();
+  return state.entries.filter(e =>
+    e.kidId === kidId && e.type === 'chore' && e.choreId === choreId && localDateKey(e.ts) === key
+  );
+}
+function todayStats(kidId){
+  const key = localDateKey();
+  const todayEntries = state.entries.filter(e => e.kidId === kidId && e.type === 'chore' && localDateKey(e.ts) === key);
+  const earned = todayEntries.reduce((s,e)=>s+Number(e.amount||0), 0);
+  let done = 0;
+  const total = state.chores.length;
+  for (const c of state.chores) {
+    if (todayEntries.some(e => e.choreId === c.id)) done++;
+  }
+  return { done, total, earned, todayEntries };
+}
+
+function choreItemHtml(c, kidId){
+  const entries = todaysChoreEntries(kidId, c.id);
+  const count = entries.length;
+  const multi = !!c.allowMultiple;
+  const done = count > 0;
+  let statusHtml = `<div class="chore-check" aria-hidden="true">✓</div>`;
+  if (multi && count > 0) {
+    statusHtml = `<div class="chore-count-badge" title="Done ${count}× today">×${count}</div>`;
+  }
+  return `<div class="chore-item ${done?'done-today':''}" role="button" tabindex="0" data-chore="${c.id}" data-done="${done?'1':'0'}">
       <div class="chore-emoji">${c.emoji||'⭐'}</div>
       <div class="chore-meta">
         <div class="chore-name">${escapeHtml(c.name)}</div>
         <div class="chore-pay">${money(c.amount)}</div>
+        ${done && !multi ? '<div class="chore-done-label">Done today</div>' : ''}
+        ${done && multi ? `<div class="chore-done-label">Done today${count>1?' ×'+count:''} · tap to add</div>` : ''}
       </div>
+      ${statusHtml}
       <button class="chore-edit" data-edit="${c.id}" title="Edit" aria-label="Edit">✏️</button>
-    </div>`).join('');
-  el.querySelectorAll('[data-chore]').forEach(row => {
+    </div>`;
+}
+function bindChoreRows(root){
+  root.querySelectorAll('[data-chore]').forEach(row => {
     row.addEventListener('click', (e) => {
       if (e.target.closest('[data-edit]')) return;
-      logChore(row.dataset.chore);
+      const id = row.dataset.chore;
+      const chore = state.chores.find(c => c.id === id);
+      if (!chore) return;
+      const kid = selectedKid();
+      if (!kid) return;
+      const todays = todaysChoreEntries(kid.id, id);
+      if (todays.length && !chore.allowMultiple) {
+        // Ask to undo today's log
+        if (confirm(`Undo "${chore.name}" for today? This removes the $${Number(chore.amount).toFixed(2)} earned.`)) {
+          undoTodayChore(kid.id, id);
+        }
+        return;
+      }
+      logChore(id);
     });
   });
-  el.querySelectorAll('[data-edit]').forEach(btn => {
+  root.querySelectorAll('[data-edit]').forEach(btn => {
     btn.onclick = (e) => { e.stopPropagation(); requireUnlock(() => openChoreModal(btn.dataset.edit)); };
   });
 }
+function undoTodayChore(kidId, choreId){
+  const todays = todaysChoreEntries(kidId, choreId);
+  if (!todays.length) return;
+  // Remove the most recent one today (or all if single-mode — remove all today's for that chore)
+  const chore = state.chores.find(c => c.id === choreId);
+  const toRemove = chore && chore.allowMultiple ? [todays.sort((a,b)=>b.ts-a.ts)[0]] : todays;
+  const ids = new Set(toRemove.map(e => e.id));
+  state.entries = state.entries.filter(e => !ids.has(e.id));
+  lastAction = null;
+  render();
+  showToast('Undone for today');
+}
+function renderChores(){
+  const el = document.getElementById('choreList');
+  const kid = selectedKid();
+  const kidId = kid ? kid.id : null;
+
+  // Today summary
+  if (kidId) {
+    const st = todayStats(kidId);
+    const tp = document.getElementById('todayProgress');
+    const te = document.getElementById('todayEarned');
+    if (tp) tp.textContent = `${st.done}/${st.total} chores`;
+    if (te) te.textContent = `${money(st.earned)} earned`;
+  }
+
+  if (!state.chores.length) {
+    el.innerHTML = '<div class="empty">No chores yet. Tap + Add.</div>';
+    return;
+  }
+  if (!kidId) {
+    el.innerHTML = '<div class="empty">Add a kid to get started</div>';
+    return;
+  }
+  const byCat = {};
+  for (const c of state.chores) {
+    const cat = c.category || CATEGORY_BY_NAME[String(c.name||'').trim().toLowerCase()] || 'general';
+    if (!c.category) c.category = cat;
+    (byCat[cat] = byCat[cat] || []).push(c);
+  }
+  el.innerHTML = CATEGORIES.map(cat => {
+    const items = byCat[cat.id] || [];
+    if (!items.length) return '';
+    const collapsed = isCategoryCollapsed(cat.id);
+    const doneCount = items.filter(c => todaysChoreEntries(kidId, c.id).length > 0).length;
+    return `<div class="cat-section ${collapsed?'collapsed':''}" data-cat="${cat.id}">
+      <button type="button" class="cat-header" data-toggle-cat="${cat.id}" aria-expanded="${!collapsed}">
+        <span class="cat-emoji">${cat.emoji}</span>
+        <span class="cat-title">${escapeHtml(cat.name)}</span>
+        <span class="cat-progress">${doneCount}/${items.length} done</span>
+        <span class="cat-chevron">▼</span>
+      </button>
+      <div class="cat-body">${items.map(c => choreItemHtml(c, kidId)).join('')}</div>
+    </div>`;
+  }).join('');
+  const known = new Set(CATEGORIES.map(c => c.id));
+  const orphans = Object.keys(byCat).filter(k => !known.has(k));
+  if (orphans.length) {
+    const extra = orphans.flatMap(k => byCat[k]);
+    el.insertAdjacentHTML('beforeend', `<div class="cat-section" data-cat="orphan">
+      <button type="button" class="cat-header"><span class="cat-emoji">🏠</span>
+      <span class="cat-title">Other</span><span class="cat-progress">0/${extra.length} done</span></button>
+      <div class="cat-body">${extra.map(c => choreItemHtml(c, kidId)).join('')}</div></div>`);
+  }
+  el.querySelectorAll('[data-toggle-cat]').forEach(btn => {
+    btn.onclick = (e) => { e.preventDefault(); toggleCategory(btn.dataset.toggleCat); };
+  });
+  bindChoreRows(el);
+}
+
 
 function avgChoreAmount(){
   if (!state.chores.length) return 1;
@@ -600,6 +813,11 @@ function logChore(choreId){
   if (!kid) return;
   const chore = state.chores.find(c => c.id === choreId);
   if (!chore) return;
+  const todays = todaysChoreEntries(kid.id, choreId);
+  if (todays.length && !chore.allowMultiple) {
+    showToast('Already done today — tap again to undo');
+    return;
+  }
   const entry = { id: uid('e'), kidId: kid.id, type: 'chore', choreId: chore.id,
     name: chore.name, amount: Number(chore.amount), ts: Date.now(), emoji: chore.emoji };
   state.entries.push(entry);
@@ -684,18 +902,29 @@ function openPayoutModal(){
 }
 
 function openChoreModal(id){
-  const c = id ? state.chores.find(x => x.id===id) : { name:'', amount:1, emoji:'⭐' };
+  const c = id ? state.chores.find(x => x.id===id) : { name:'', amount:1, emoji:'⭐', category: suggestedCategoryId() };
   const isNew = !id;
+  let cat = (c && c.category) || suggestedCategoryId() || 'general';
   openModal(`
     <h2>${isNew?'Add chore':'Edit chore'}</h2>
     <div class="field"><label>Emoji</label><input id="chEmoji" maxlength="4" value="${escapeHtml(c.emoji||'⭐')}"></div>
     <div class="field"><label>Name</label><input id="chName" value="${escapeHtml(c.name||'')}" placeholder="Chore name"></div>
     <div class="field"><label>Amount ($)</label><input id="chAmt" type="number" min="0" step="0.25" value="${c.amount||1}" inputmode="decimal"></div>
+    <div class="field"><label class="field-check"><input type="checkbox" id="chMulti" ${c.allowMultiple?'checked':''}> Can do more than once a day</label></div>
+    <div class="field"><label>Category</label>
+      <div class="cat-picker" id="catPick">
+        ${CATEGORIES.map(x => `<button type="button" class="cat-pick ${x.id===cat?'active':''}" data-cat="${x.id}">${x.emoji} ${escapeHtml(x.name)}</button>`).join('')}
+      </div>
+    </div>
     <div class="modal-actions">
       <button class="btn btn-outline" id="mCancel">Cancel</button>
       ${!isNew?'<button class="btn btn-danger" id="mDel">Delete</button>':''}
       <button class="btn btn-primary" id="mSave" style="background:var(--primary);color:#fff">Save</button>
     </div>`);
+  document.querySelectorAll('#catPick [data-cat]').forEach(b => b.onclick = () => {
+    cat = b.dataset.cat;
+    document.querySelectorAll('#catPick [data-cat]').forEach(x => x.classList.toggle('active', x.dataset.cat===cat));
+  });
   document.getElementById('mCancel').onclick = closeModal;
   document.getElementById('mSave').onclick = () => {
     const name = document.getElementById('chName').value.trim();
@@ -703,8 +932,9 @@ function openChoreModal(id){
     const emoji = document.getElementById('chEmoji').value.trim() || '⭐';
     if (!name) { showToast('Name required'); return; }
     if (!(amount >= 0)) { showToast('Invalid amount'); return; }
-    if (isNew) state.chores.push({ id: uid('c'), name, amount, emoji });
-    else { c.name=name; c.amount=amount; c.emoji=emoji; }
+    const allowMultiple = !!document.getElementById('chMulti').checked;
+    if (isNew) state.chores.push({ id: uid('c'), name, amount, emoji, category: cat, allowMultiple });
+    else { c.name=name; c.amount=amount; c.emoji=emoji; c.category=cat; c.allowMultiple=allowMultiple; }
     closeModal(); render();
   };
   const del = document.getElementById('mDel');
@@ -896,6 +1126,7 @@ function openImport(){
       if (!data.kids || !data.chores || !Array.isArray(data.entries)) throw new Error('Invalid backup');
       state = data;
       if (!Array.isArray(state.goals)) state.goals = [];
+      if (!state.collapsedCategories || typeof state.collapsedCategories !== 'object') state.collapsedCategories = {};
       if (state.choresDataVersion == null) state.choresDataVersion = 0;
       migrateChores(state);
       if (!state.selectedKidId && state.kids[0]) state.selectedKidId = state.kids[0].id;
@@ -927,15 +1158,71 @@ document.getElementById('btnClearHistory').onclick = () => requireUnlock(() => {
   lastAction = null; render(); showToast('History cleared');
 });
 
+let swRegistration = null;
+let refreshingPage = false;
+let refreshInFlight = false;
+
+async function checkForAppUpdate({ forceReload = false, silent = false } = {}) {
+  if (refreshInFlight) return;
+  refreshInFlight = true;
+  const btn = document.getElementById('btnRefresh');
+  if (btn) btn.classList.add('spinning');
+  if (!silent) showToast('Updating…');
+  try {
+    if (!('serviceWorker' in navigator)) {
+      if (forceReload) location.reload();
+      else if (!silent) showToast('Up to date');
+      return;
+    }
+    let reg = swRegistration || await navigator.serviceWorker.getRegistration();
+    if (!reg) {
+      try { reg = await navigator.serviceWorker.register('./sw.js'); swRegistration = reg; }
+      catch(e) { reg = null; }
+    }
+    if (!reg) {
+      if (forceReload) location.reload();
+      else if (!silent) showToast('Up to date');
+      return;
+    }
+    swRegistration = reg;
+    try { await reg.update(); } catch(e) {}
+    // If a waiting worker exists, tell it to activate (sw already calls skipWaiting on install,
+    // but postMessage helps older cached workers; then controllerchange reloads).
+    if (reg.waiting) {
+      try { reg.waiting.postMessage({ type: 'SKIP_WAITING' }); } catch(e) {}
+      // Also call skipWaiting if exposed — message handler in sw.js handles it
+      if (!silent) showToast('Updating…');
+      // controllerchange listener will reload; fallback timer
+      setTimeout(() => { if (!refreshingPage) location.reload(); }, 1200);
+      return;
+    }
+    // No waiting worker — either already current, or update installed into waiting asynchronously
+    await new Promise(r => setTimeout(r, 400));
+    if (reg.waiting) {
+      try { reg.waiting.postMessage({ type: 'SKIP_WAITING' }); } catch(e) {}
+      setTimeout(() => { if (!refreshingPage) location.reload(); }, 1200);
+      return;
+    }
+    if (forceReload) {
+      location.reload();
+      return;
+    }
+    if (!silent) showToast('Up to date');
+  } finally {
+    refreshInFlight = false;
+    if (btn) btn.classList.remove('spinning');
+  }
+}
+
 if ('serviceWorker' in navigator) {
-  let refreshing = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (refreshing) return;
-    refreshing = true;
+    if (refreshingPage) return;
+    refreshingPage = true;
     window.location.reload();
   });
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').then(reg => {
+      swRegistration = reg;
       if (reg) {
         reg.update().catch(()=>{});
         setInterval(() => reg.update().catch(()=>{}), 60 * 60 * 1000);
@@ -943,6 +1230,63 @@ if ('serviceWorker' in navigator) {
     }).catch(()=>{});
   });
 }
+
+
+let lastSeenDateKey = localDateKey();
+function refreshIfNewDay(){
+  const key = localDateKey();
+  if (key !== lastSeenDateKey) {
+    lastSeenDateKey = key;
+    render();
+  } else {
+    // Still re-render on resume so checklist reflects any changes
+    render();
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') refreshIfNewDay();
+});
+window.addEventListener('focus', refreshIfNewDay);
+setInterval(() => {
+  const key = localDateKey();
+  if (key !== lastSeenDateKey) {
+    lastSeenDateKey = key;
+    render();
+  }
+}, 60 * 1000);
+
+document.getElementById('btnRefresh').onclick = () => checkForAppUpdate({ forceReload: true });
+
+/* Simple pull-to-refresh at scroll top (iOS standalone friendly) */
+(function setupPullToRefresh(){
+  const ind = document.getElementById('ptrIndicator');
+  let startY = 0, pulling = false, armed = false;
+  const THRESH = 70;
+  const onStart = (y) => {
+    if (window.scrollY > 2 || document.documentElement.scrollTop > 2) { pulling = false; return; }
+    startY = y; pulling = true; armed = false;
+  };
+  const onMove = (y) => {
+    if (!pulling) return;
+    const dy = y - startY;
+    if (dy > 10) {
+      ind.classList.add('show');
+      ind.textContent = dy > THRESH ? '↑ Release to refresh' : '↓ Pull to refresh';
+      armed = dy > THRESH;
+    }
+  };
+  const onEnd = () => {
+    if (!pulling) return;
+    pulling = false;
+    ind.classList.remove('show');
+    if (armed) checkForAppUpdate({ forceReload: true });
+    armed = false;
+  };
+  window.addEventListener('touchstart', (e) => { if (e.touches[0]) onStart(e.touches[0].clientY); }, { passive: true });
+  window.addEventListener('touchmove', (e) => { if (e.touches[0]) onMove(e.touches[0].clientY); }, { passive: true });
+  window.addEventListener('touchend', onEnd, { passive: true });
+  window.addEventListener('touchcancel', onEnd, { passive: true });
+})();
 
 render();
 </script>
