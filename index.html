@@ -138,6 +138,35 @@ button { cursor: pointer; border: none; background: none; }
 .chip.active { background: var(--primary); color: #fff; }
 .hidden { display: none !important; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+
+.goals-section { margin-bottom: 18px; }
+.goal-card { background: var(--card); border-radius: var(--radius); padding: 14px 14px 12px;
+  box-shadow: var(--shadow); margin-bottom: 10px; }
+.goal-card.ready { background: linear-gradient(135deg, #ECFDF5, #D1FAE5); border: 2px solid #34D399; }
+.goal-card.achieved { opacity: .85; }
+.goal-top { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.goal-emoji { font-size: 1.7rem; width: 48px; height: 48px; border-radius: 14px; background: #EEF2FF;
+  display: grid; place-items: center; flex-shrink: 0; }
+.goal-card.ready .goal-emoji { background: #A7F3D0; }
+.goal-info { flex: 1; min-width: 0; }
+.goal-name { font-weight: 800; font-size: 1.05rem; }
+.goal-meta { color: var(--muted); font-size: .85rem; font-weight: 600; margin-top: 2px; }
+.goal-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.goal-actions button { width: 40px; height: 40px; border-radius: 12px; font-size: 1.05rem; color: var(--muted); }
+.goal-bar { height: 18px; background: #E0E7FF; border-radius: 999px; overflow: hidden; margin: 8px 0 8px; }
+.goal-bar-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #6366F1, #A78BFA);
+  transition: width .35s ease; min-width: 0; }
+.goal-card.ready .goal-bar-fill { background: linear-gradient(90deg, #10B981, #34D399); }
+.goal-progress-text { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+  font-size: .9rem; font-weight: 700; }
+.goal-progress-text .saved { color: var(--accent); }
+.goal-progress-text .togo { color: var(--muted); }
+.goal-estimate { font-size: .82rem; color: var(--muted); margin-top: 6px; font-weight: 600; }
+.goal-ready-badge { display: inline-flex; align-items: center; gap: 4px; background: #10B981; color: #fff;
+  font-weight: 800; font-size: .85rem; padding: 6px 12px; border-radius: 999px; margin-top: 8px; }
+.goal-buy { margin-top: 10px; width: 100%; min-height: 44px; border-radius: 12px; background: var(--accent);
+  color: #fff; font-weight: 800; }
+.goal-achieved-label { font-size: .85rem; color: var(--muted); font-weight: 700; margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -177,6 +206,19 @@ button { cursor: pointer; border: none; background: none; }
         <strong id="weeklyEarned">$0.00</strong>
       </div>
     </div>
+    <div class="section goals-section">
+      <div class="section-head">
+        <h2 class="section-title">🎯 Goals</h2>
+        <button class="linkish" id="btnAddGoal">+ Add</button>
+      </div>
+      <div id="goalsList"></div>
+      <div id="achievedWrap" class="hidden" style="margin-top:14px">
+        <div class="section-head">
+          <h2 class="section-title" style="font-size:.95rem;color:var(--muted)">Achieved</h2>
+        </div>
+        <div id="achievedList"></div>
+      </div>
+    </div>
     <div class="section">
       <div class="section-head">
         <h2 class="section-title">Tap a chore</h2>
@@ -205,12 +247,24 @@ button { cursor: pointer; border: none; background: none; }
 
 <script>
 const STORAGE_KEY = 'chore-tracker-v1';
+const CHORES_DATA_VERSION = 2;
 const DEFAULT_CHORES = [
   { id: 'c1', name: 'Make bed', amount: 1, emoji: '🛏️' },
   { id: 'c2', name: 'Take out trash', amount: 2, emoji: '🗑️' },
   { id: 'c3', name: 'Clean room', amount: 3, emoji: '🧹' },
   { id: 'c4', name: 'Set table', amount: 1, emoji: '🍽️' },
   { id: 'c5', name: 'Put away toys', amount: 1, emoji: '🧸' },
+  { id: 'c6', name: 'Laundry (fold & put away)', amount: 2, emoji: '👕' },
+  { id: 'c7', name: 'Take out recycling', amount: 1, emoji: '♻️' },
+  { id: 'c8', name: 'Homework right after school', amount: 2, emoji: '📚' },
+  { id: 'c9', name: 'Clean up toys', amount: 1, emoji: '🪀' },
+  { id: 'c10', name: 'Slept in own bed', amount: 1, emoji: '😴' },
+  { id: 'c11', name: 'Clear table after dinner', amount: 1, emoji: '🍽️' },
+  { id: 'c12', name: 'Put shoes & backpack away', amount: 0.5, emoji: '🎒' },
+  { id: 'c13', name: 'Brush teeth morning & night', amount: 0.5, emoji: '🪥' },
+  { id: 'c14', name: 'Get dressed & ready on time', amount: 1, emoji: '👔' },
+  { id: 'c15', name: 'Help unload dishwasher', amount: 1, emoji: '🍽️' },
+  { id: 'c16', name: 'Read 20 minutes', amount: 1, emoji: '📖' },
 ];
 const DEFAULT_KIDS = [
   { id: 'k1', name: 'Reuven', color: '#6366F1' },
@@ -232,6 +286,8 @@ function loadState(){
     if (raw) {
       const s = JSON.parse(raw);
       if (!s.kids || !s.chores || !s.entries) throw new Error('bad');
+      if (!Array.isArray(s.goals)) s.goals = [];
+      migrateChores(s);
       return s;
     }
   } catch(e){}
@@ -239,9 +295,26 @@ function loadState(){
     kids: DEFAULT_KIDS.map(k => ({...k})),
     chores: DEFAULT_CHORES.map(c => ({...c})),
     entries: [], // {id, kidId, type:'chore'|'payout', choreId?, name, amount, ts}
+    goals: [], // {id, kidId, name, price, emoji, achieved, achievedAt?}
     selectedKidId: DEFAULT_KIDS[0].id,
     pinHash: null,
+    choresDataVersion: CHORES_DATA_VERSION,
   };
+}
+function migrateChores(s){
+  const ver = Number(s.choresDataVersion) || 0;
+  if (ver >= CHORES_DATA_VERSION) return;
+  // Add any default chores missing by name (case-insensitive) exactly once.
+  // Never alter balances, history, or existing chores. Deleted chores won't return after version bump.
+  const have = new Set((s.chores || []).map(c => String(c.name || '').trim().toLowerCase()));
+  for (const def of DEFAULT_CHORES) {
+    const key = def.name.trim().toLowerCase();
+    if (!have.has(key)) {
+      s.chores.push({ id: uid('c'), name: def.name, amount: def.amount, emoji: def.emoji });
+      have.add(key);
+    }
+  }
+  s.choresDataVersion = CHORES_DATA_VERSION;
 }
 function saveState(){
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -293,6 +366,9 @@ function render(){
   if (!kid) {
     document.getElementById('balanceAmt').textContent = '$0.00';
     document.getElementById('choreList').innerHTML = '<div class="empty">Add a kid to get started</div>';
+    document.getElementById('goalsList').innerHTML = '';
+    document.getElementById('achievedList').innerHTML = '';
+    document.getElementById('achievedWrap').classList.add('hidden');
     document.getElementById('historyList').innerHTML = '';
     renderKids();
     return;
@@ -308,6 +384,7 @@ function render(){
   document.getElementById('lockBanner').classList.toggle('hidden', !state.pinHash || unlocked);
   renderKids();
   renderChores();
+  renderGoals();
   renderHistory();
   saveState();
 }
@@ -354,6 +431,143 @@ function renderChores(){
     btn.onclick = (e) => { e.stopPropagation(); requireUnlock(() => openChoreModal(btn.dataset.edit)); };
   });
 }
+
+function avgChoreAmount(){
+  if (!state.chores.length) return 1;
+  const sum = state.chores.reduce((s,c)=>s+Number(c.amount||0),0);
+  return Math.max(0.25, sum / state.chores.length);
+}
+function renderGoals(){
+  const kid = selectedKid();
+  const el = document.getElementById('goalsList');
+  const achEl = document.getElementById('achievedList');
+  const wrap = document.getElementById('achievedWrap');
+  if (!kid) { el.innerHTML=''; achEl.innerHTML=''; wrap.classList.add('hidden'); return; }
+  const bal = balanceFor(kid.id);
+  const active = (state.goals||[]).filter(g => g.kidId===kid.id && !g.achieved);
+  const done = (state.goals||[]).filter(g => g.kidId===kid.id && g.achieved)
+    .slice().sort((a,b)=>(b.achievedAt||0)-(a.achievedAt||0));
+  if (!active.length) {
+    el.innerHTML = '<div class="empty">No goals yet. Save up for something fun!</div>';
+  } else {
+    const avg = avgChoreAmount();
+    el.innerHTML = active.map(g => {
+      const price = Math.max(0.01, Number(g.price)||0);
+      const pct = Math.min(100, Math.round((bal / price) * 1000) / 10);
+      const saved = Math.min(bal, price);
+      const toGo = Math.max(0, Math.round((price - bal)*100)/100);
+      const ready = bal + 0.001 >= price;
+      const choresLeft = ready ? 0 : Math.ceil(toGo / avg);
+      return `<div class="goal-card ${ready?'ready':''}" data-goal="${g.id}">
+        <div class="goal-top">
+          <div class="goal-emoji">${g.emoji||'🎯'}</div>
+          <div class="goal-info">
+            <div class="goal-name">${escapeHtml(g.name)}</div>
+            <div class="goal-meta">Goal ${money(price)}</div>
+          </div>
+          <div class="goal-actions">
+            <button data-gedit="${g.id}" title="Edit" aria-label="Edit">✏️</button>
+          </div>
+        </div>
+        <div class="goal-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">
+          <div class="goal-bar-fill" style="width:${pct}%"></div>
+        </div>
+        <div class="goal-progress-text">
+          <span class="saved">${money(saved)} saved of ${money(price)}</span>
+          <span class="togo">${ready ? 'Ready!' : money(toGo) + ' to go'}</span>
+        </div>
+        ${ready
+          ? `<div class="goal-ready-badge">Ready! 🎉</div>
+             <button class="goal-buy" data-gbuy="${g.id}">Mark as Bought</button>`
+          : `<div class="goal-estimate">~${choresLeft} more chore${choresLeft===1?'':'s'} (avg ${money(avg)})</div>`}
+      </div>`;
+    }).join('');
+  }
+  if (done.length) {
+    wrap.classList.remove('hidden');
+    achEl.innerHTML = done.map(g => `
+      <div class="goal-card achieved">
+        <div class="goal-top">
+          <div class="goal-emoji">${g.emoji||'🏆'}</div>
+          <div class="goal-info">
+            <div class="goal-name">${escapeHtml(g.name)}</div>
+            <div class="goal-achieved-label">Bought for ${money(g.price)}${g.achievedAt? ' · '+fmtDate(g.achievedAt):''}</div>
+          </div>
+          <div class="goal-actions">
+            <button data-gdel="${g.id}" title="Remove" aria-label="Remove">🗑️</button>
+          </div>
+        </div>
+      </div>`).join('');
+  } else {
+    wrap.classList.add('hidden');
+    achEl.innerHTML = '';
+  }
+  el.querySelectorAll('[data-gedit]').forEach(btn => {
+    btn.onclick = (e) => { e.stopPropagation(); requireUnlock(() => openGoalModal(btn.dataset.gedit)); };
+  });
+  el.querySelectorAll('[data-gbuy]').forEach(btn => {
+    btn.onclick = (e) => { e.stopPropagation(); requireUnlock(() => buyGoal(btn.dataset.gbuy)); };
+  });
+  achEl.querySelectorAll('[data-gdel]').forEach(btn => {
+    btn.onclick = () => requireUnlock(() => {
+      state.goals = state.goals.filter(g => g.id !== btn.dataset.gdel);
+      render(); showToast('Removed from Achieved');
+    });
+  });
+}
+function openGoalModal(id){
+  const kid = selectedKid();
+  if (!kid) return;
+  const g = id ? state.goals.find(x => x.id===id) : null;
+  const isNew = !g;
+  const phName = kid.name === 'Lev' ? 'Paw Patrol toy' : 'American Dream Mall trip';
+  openModal(`
+    <h2>${isNew?'Add goal':'Edit goal'}</h2>
+    <div class="field"><label>Emoji</label><input id="gEmoji" maxlength="4" value="${escapeHtml(g?g.emoji||'🎯':'🎯')}"></div>
+    <div class="field"><label>Name</label><input id="gName" value="${escapeHtml(g?g.name:'')}" placeholder="${escapeHtml(phName)}"></div>
+    <div class="field"><label>Price ($)</label><input id="gPrice" type="number" min="0.01" step="0.25" value="${g?g.price:10}" inputmode="decimal"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" id="mCancel">Cancel</button>
+      ${!isNew?'<button class="btn btn-danger" id="mDel">Delete</button>':''}
+      <button class="btn btn-primary" id="mSave" style="background:var(--primary);color:#fff">Save</button>
+    </div>`);
+  document.getElementById('mCancel').onclick = closeModal;
+  document.getElementById('mSave').onclick = () => {
+    const name = document.getElementById('gName').value.trim();
+    const price = Number(document.getElementById('gPrice').value);
+    const emoji = document.getElementById('gEmoji').value.trim() || '🎯';
+    if (!name) { showToast('Name required'); return; }
+    if (!(price > 0)) { showToast('Enter a price'); return; }
+    if (isNew) {
+      state.goals.push({ id: uid('g'), kidId: kid.id, name, price, emoji, achieved: false });
+    } else {
+      g.name = name; g.price = price; g.emoji = emoji;
+    }
+    closeModal(); render();
+  };
+  const del = document.getElementById('mDel');
+  if (del) del.onclick = () => {
+    state.goals = state.goals.filter(x => x.id !== id);
+    closeModal(); render(); showToast('Goal removed');
+  };
+}
+function buyGoal(id){
+  const kid = selectedKid();
+  const g = state.goals.find(x => x.id === id);
+  if (!kid || !g || g.achieved) return;
+  const price = Math.round(Number(g.price)*100)/100;
+  const bal = balanceFor(kid.id);
+  if (price > bal + 0.001) { showToast('Not enough saved yet'); return; }
+  const entry = { id: uid('e'), kidId: kid.id, type: 'payout', name: 'Bought: ' + g.name,
+    amount: price, ts: Date.now(), goalId: g.id };
+  state.entries.push(entry);
+  g.achieved = true;
+  g.achievedAt = Date.now();
+  lastAction = { type: 'add', kidId: kid.id, entryId: entry.id };
+  render();
+  showToast(`Bought ${g.emoji||'🎯'} ${g.name}!`, true);
+}
+
 function renderHistory(){
   const kid = selectedKid();
   const el = document.getElementById('historyList');
@@ -538,6 +752,7 @@ function openKidModal(id){
   if (del) del.onclick = () => {
     if (state.kids.length <= 1) { showToast('Need at least one kid'); return; }
     state.entries = state.entries.filter(e => e.kidId !== k.id);
+    state.goals = (state.goals||[]).filter(g => g.kidId !== k.id);
     state.kids = state.kids.filter(x => x.id !== k.id);
     state.selectedKidId = state.kids[0].id;
     closeModal(); render(); showToast('Kid removed');
@@ -680,6 +895,9 @@ function openImport(){
       const data = JSON.parse(document.getElementById('impText').value);
       if (!data.kids || !data.chores || !Array.isArray(data.entries)) throw new Error('Invalid backup');
       state = data;
+      if (!Array.isArray(state.goals)) state.goals = [];
+      if (state.choresDataVersion == null) state.choresDataVersion = 0;
+      migrateChores(state);
       if (!state.selectedKidId && state.kids[0]) state.selectedKidId = state.kids[0].id;
       unlocked = !state.pinHash;
       lastAction = null;
@@ -699,6 +917,7 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
 document.getElementById('btnPayout').onclick = () => requireUnlock(openPayoutModal);
 document.getElementById('btnUndo').onclick = undoLast;
 document.getElementById('btnAddChore').onclick = () => requireUnlock(() => openChoreModal());
+document.getElementById('btnAddGoal').onclick = () => requireUnlock(() => openGoalModal());
 document.getElementById('btnMenu').onclick = openMenu;
 document.getElementById('btnUnlock').onclick = () => { pendingPinAction = null; openPinModal('Enter parent PIN'); };
 document.getElementById('btnClearHistory').onclick = () => requireUnlock(() => {
@@ -709,7 +928,20 @@ document.getElementById('btnClearHistory').onclick = () => requireUnlock(() => {
 });
 
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (refreshing) return;
+    refreshing = true;
+    window.location.reload();
+  });
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').then(reg => {
+      if (reg) {
+        reg.update().catch(()=>{});
+        setInterval(() => reg.update().catch(()=>{}), 60 * 60 * 1000);
+      }
+    }).catch(()=>{});
+  });
 }
 
 render();
