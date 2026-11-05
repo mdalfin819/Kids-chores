@@ -1,4 +1,4 @@
-const CACHE = 'chore-tracker-v2';
+const CACHE = 'chore-tracker-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -34,4 +34,8 @@ self.addEventListener('fetch', (e) => {
       return cached || fetched;
     })
   );
+});
+
+self.addEventListener('message', (e) => {
+  if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
