@@ -233,6 +233,38 @@ button { cursor: pointer; border: none; background: none; }
 .photo-preview { width: 100%; height: 140px; border-radius: 14px; object-fit: cover; background: #EEF2FF; margin-top: 8px; }
 .photo-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .photo-actions .btn { flex: 1; min-width: 120px; min-height: 44px; }
+
+.goals-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+@media (min-width: 520px) { .goals-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.goal-tile { background: var(--card); border-radius: 16px; box-shadow: var(--shadow); padding: 8px;
+  text-align: left; width: 100%; display: flex; flex-direction: column; gap: 6px; min-height: 0;
+  border: 2px solid transparent; }
+.goal-tile.ready { border-color: #34D399; background: linear-gradient(135deg, #ECFDF5, #D1FAE5); }
+.goal-tile-thumb { width: 100%; aspect-ratio: 1 / 1; max-height: 120px; border-radius: 12px; overflow: hidden;
+  background: #EEF2FF; display: grid; place-items: center; position: relative; }
+.goal-tile-thumb img { width: 100%; height: 100%; object-fit: cover; display: block;
+  transition: filter .45s ease, opacity .45s ease; }
+.goal-tile-emoji { font-size: 2.4rem; }
+.goal-tile-name { font-weight: 800; font-size: .92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.goal-tile-bar { height: 8px; background: #E0E7FF; border-radius: 999px; overflow: hidden; }
+.goal-tile-bar > span { display: block; height: 100%; border-radius: 999px;
+  background: linear-gradient(90deg, #6366F1, #A78BFA); transition: width .55s cubic-bezier(.2,.8,.2,1); }
+.goal-tile.ready .goal-tile-bar > span { background: linear-gradient(90deg, #10B981, #34D399); }
+.goal-tile-togo { font-size: .78rem; font-weight: 800; color: var(--muted); }
+.goal-tile.ready .goal-tile-togo { color: #059669; }
+.goal-tile-add { border: 2px dashed #C7D2FE; background: #EEF2FF; box-shadow: none; color: var(--primary);
+  font-weight: 800; min-height: 140px; align-items: center; justify-content: center; font-size: 1rem; gap: 4px; }
+.goal-tile-add:active { transform: scale(.98); }
+.achieved-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+@media (min-width: 520px) { .achieved-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.goal-tile.achieved { opacity: .9; }
+.goal-tile.achieved .goal-tile-togo { color: var(--muted); font-weight: 700; }
+.file-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0,0,0,0); white-space: nowrap; border: 0; opacity: 0; }
+.photo-actions label.btn { position: relative; overflow: hidden; }
+.detail-photo { width: 100%; height: 200px; border-radius: 16px; object-fit: cover; background: #EEF2FF; margin-bottom: 12px; }
+.detail-photo-fallback { width: 100%; height: 160px; border-radius: 16px; background: #EEF2FF;
+  display: grid; place-items: center; font-size: 4rem; margin-bottom: 12px; }
 </style>
 </head>
 <body>
@@ -695,111 +727,105 @@ function renderGoals(){
   const active = (state.goals||[]).filter(g => g.kidId===kid.id && !g.achieved);
   const done = (state.goals||[]).filter(g => g.kidId===kid.id && g.achieved)
     .slice().sort((a,b)=>(b.achievedAt||0)-(a.achievedAt||0));
-  if (!active.length) {
-    el.innerHTML = '<div class="empty">No goals yet. Save up for something fun!</div>';
-  } else {
-    const avg = avgChoreAmount();
-    el.innerHTML = active.map(g => {
-      const price = Math.max(0.01, Number(g.price)||0);
-      const pct = Math.min(100, Math.round((bal / price) * 1000) / 10);
-      const saved = Math.min(bal, price);
-      const toGo = Math.max(0, Math.round((price - bal)*100)/100);
-      const ready = bal + 0.001 >= price;
-      const choresLeft = ready ? 0 : Math.ceil(toGo / avg);
-      // Greyscale fades out as progress rises (full color at 100%)
-      const grey = Math.max(0, Math.min(100, 100 - pct));
-      const fade = Math.max(0.55, pct / 100);
-      const photoHtml = g.photo
-        ? `<div class="goal-photo-wrap">
-             <img class="goal-photo" data-photo="${g.id}" src="${g.photo}" alt="${escapeHtml(g.name)}"
-               style="filter: grayscale(${grey}%) opacity(${fade});">
-             ${ready ? `<div class="goal-confetti" data-confetti="${g.id}"></div>` : ''}
-           </div>`
-        : `<div class="goal-photo-wrap"><div class="goal-photo-fallback">${g.emoji||'🎯'}</div>
-             ${ready ? `<div class="goal-confetti" data-confetti="${g.id}"></div>` : ''}
-           </div>`;
-      return `<div class="goal-card ${ready?'ready':''}" data-goal="${g.id}">
-        <div class="goal-top">
-          <div class="goal-emoji">${g.emoji||'🎯'}</div>
-          <div class="goal-info">
-            <div class="goal-name">${escapeHtml(g.name)}</div>
-            <div class="goal-meta">Goal ${money(price)}</div>
-          </div>
-          <div class="goal-actions">
-            <button data-gedit="${g.id}" title="Edit" aria-label="Edit">✏️</button>
-          </div>
-        </div>
-        ${photoHtml}
-        <div class="goal-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">
-          <div class="goal-bar-fill" style="width:${pct}%"></div>
-        </div>
-        <div class="goal-progress-text">
-          <span class="saved">${money(saved)} saved of ${money(price)}</span>
-          <span class="togo">${ready ? 'Ready!' : money(toGo) + ' to go'}</span>
-        </div>
-        ${ready
-          ? `<div class="goal-ready-badge">Ready! 🎉</div>
-             <button class="goal-buy" data-gbuy="${g.id}">Mark as Bought</button>`
-          : `<div class="goal-estimate">~${choresLeft} more chore${choresLeft===1?'':'s'} (avg ${money(avg)})</div>`}
-      </div>`;
-    }).join('');
-  }
+  const avg = avgChoreAmount();
+
+  const tileHtml = (g, {achieved=false}={}) => {
+    const price = Math.max(0.01, Number(g.price)||0);
+    const pct = achieved ? 100 : Math.min(100, Math.round((bal / price) * 1000) / 10);
+    const toGo = Math.max(0, Math.round((price - bal)*100)/100);
+    const ready = !achieved && bal + 0.001 >= price;
+    const grey = achieved ? 0 : Math.max(0, Math.min(100, 100 - pct));
+    const fade = achieved ? 1 : Math.max(0.55, pct / 100);
+    const thumb = g.photo
+      ? `<img src="${g.photo}" alt="" style="filter: grayscale(${grey}%) opacity(${fade});">`
+      : `<div class="goal-tile-emoji">${g.emoji||'🎯'}</div>`;
+    const togoText = achieved ? `Bought ${money(g.price)}` : (ready ? 'Ready! 🎉' : `${money(toGo)} to go`);
+    return `<button type="button" class="goal-tile ${ready?'ready':''} ${achieved?'achieved':''}" data-goal-open="${g.id}">
+      <div class="goal-tile-thumb">${thumb}</div>
+      <div class="goal-tile-name">${escapeHtml(g.name)}</div>
+      <div class="goal-tile-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">
+        <span style="width:${pct}%"></span>
+      </div>
+      <div class="goal-tile-togo">${togoText}</div>
+    </button>`;
+  };
+
+  const addTile = `<button type="button" class="goal-tile goal-tile-add" id="btnAddGoalTile">＋ Add goal</button>`;
+  el.innerHTML = `<div class="goals-grid">${active.map(g => tileHtml(g)).join('')}${addTile}</div>`;
+
   if (done.length) {
     wrap.classList.remove('hidden');
-    achEl.innerHTML = done.map(g => `
-      <div class="goal-card achieved">
-        <div class="goal-top">
-          <div class="goal-emoji">${g.emoji||'🏆'}</div>
-          <div class="goal-info">
-            <div class="goal-name">${escapeHtml(g.name)}</div>
-            <div class="goal-achieved-label">Bought for ${money(g.price)}${g.achievedAt? ' · '+fmtDate(g.achievedAt):''}</div>
-          </div>
-          <div class="goal-actions">
-            <button data-gdel="${g.id}" title="Remove" aria-label="Remove">🗑️</button>
-          </div>
-        </div>
-        ${g.photo ? `<div class="goal-photo-wrap" style="height:100px;margin-top:8px;margin-bottom:0">
-          <img class="goal-photo" data-photo="${g.id}" src="${g.photo}" alt="${escapeHtml(g.name)}" style="filter:none;opacity:1">
-        </div>` : ''}
-      </div>`).join('');
+    achEl.innerHTML = `<div class="achieved-grid">${done.map(g => tileHtml(g, {achieved:true})).join('')}</div>`;
   } else {
     wrap.classList.add('hidden');
     achEl.innerHTML = '';
   }
-  el.querySelectorAll('[data-gedit]').forEach(btn => {
-    btn.onclick = (e) => { e.stopPropagation(); requireUnlock(() => openGoalModal(btn.dataset.gedit)); };
+
+  const openDetail = (id) => openGoalDetail(id);
+  el.querySelectorAll('[data-goal-open]').forEach(btn => {
+    btn.onclick = () => openDetail(btn.dataset.goalOpen);
   });
-  el.querySelectorAll('[data-gbuy]').forEach(btn => {
-    btn.onclick = (e) => { e.stopPropagation(); requireUnlock(() => buyGoal(btn.dataset.gbuy)); };
+  achEl.querySelectorAll('[data-goal-open]').forEach(btn => {
+    btn.onclick = () => openDetail(btn.dataset.goalOpen);
   });
-  const bindPhotos = (root) => {
-    root.querySelectorAll('img.goal-photo[data-photo]').forEach(img => {
-      img.onclick = (e) => { e.stopPropagation(); openLightbox(img.src); };
-    });
-  };
-  bindPhotos(el);
-  bindPhotos(achEl);
-  // Fun confetti burst for ready goals
-  el.querySelectorAll('[data-confetti]').forEach(box => {
-    if (box.dataset.burst) return;
-    box.dataset.burst = '1';
-    const colors = ['#F59E0B','#EF4444','#10B981','#6366F1','#EC4899','#06B6D4'];
-    for (let i = 0; i < 18; i++) {
-      const d = document.createElement('i');
-      d.style.left = (Math.random()*100) + '%';
-      d.style.background = colors[i % colors.length];
-      d.style.animationDelay = (Math.random()*0.35) + 's';
-      d.style.transform = `rotate(${Math.random()*180}deg)`;
-      box.appendChild(d);
-    }
-  });
-  achEl.querySelectorAll('[data-gdel]').forEach(btn => {
-    btn.onclick = () => requireUnlock(() => {
-      state.goals = state.goals.filter(g => g.id !== btn.dataset.gdel);
-      render(); showToast('Removed from Achieved');
-    });
+  const addTileBtn = document.getElementById('btnAddGoalTile');
+  if (addTileBtn) addTileBtn.onclick = () => requireUnlock(() => openGoalModal());
+}
+
+function openGoalDetail(id){
+  const kid = selectedKid();
+  const g = (state.goals||[]).find(x => x.id === id);
+  if (!kid || !g) return;
+  const bal = balanceFor(kid.id);
+  const price = Math.max(0.01, Number(g.price)||0);
+  const pct = g.achieved ? 100 : Math.min(100, Math.round((bal / price) * 1000) / 10);
+  const saved = g.achieved ? price : Math.min(bal, price);
+  const toGo = Math.max(0, Math.round((price - bal)*100)/100);
+  const ready = !g.achieved && bal + 0.001 >= price;
+  const avg = avgChoreAmount();
+  const choresLeft = ready || g.achieved ? 0 : Math.ceil(toGo / avg);
+  const grey = g.achieved ? 0 : Math.max(0, Math.min(100, 100 - pct));
+  const fade = g.achieved ? 1 : Math.max(0.55, pct / 100);
+  const photoBlock = g.photo
+    ? `<img class="detail-photo" id="detailPhoto" src="${g.photo}" alt="${escapeHtml(g.name)}"
+         style="filter: grayscale(${grey}%) opacity(${fade}); cursor:zoom-in">`
+    : `<div class="detail-photo-fallback">${g.emoji||'🎯'}</div>`;
+
+  openModal(`
+    <h2>${escapeHtml(g.emoji||'🎯')} ${escapeHtml(g.name)}</h2>
+    ${photoBlock}
+    <div class="goal-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" style="margin-bottom:10px">
+      <div class="goal-bar-fill" style="width:${pct}%"></div>
+    </div>
+    <div class="goal-progress-text" style="margin-bottom:8px">
+      <span class="saved">${money(saved)} saved of ${money(price)}</span>
+      <span class="togo">${g.achieved ? 'Bought!' : (ready ? 'Ready!' : money(toGo) + ' to go')}</span>
+    </div>
+    ${g.achieved
+      ? `<div class="goal-estimate">Bought${g.achievedAt? ' · '+fmtDate(g.achievedAt):''}</div>`
+      : (ready
+          ? `<div class="goal-ready-badge">Ready! 🎉</div>`
+          : `<div class="goal-estimate">~${choresLeft} more chore${choresLeft===1?'':'s'} (avg ${money(avg)})</div>`)}
+    <div class="modal-actions" style="flex-direction:column;margin-top:14px">
+      ${!g.achieved && ready ? `<button class="btn btn-accent" id="dBuy">Mark as Bought</button>` : ''}
+      ${!g.achieved ? `<button class="btn btn-outline" id="dEdit">✏️ Edit</button>` : ''}
+      <button class="btn btn-danger" id="dDel">${g.achieved?'Remove from Achieved':'Delete goal'}</button>
+      <button class="btn btn-outline" id="dClose">Close</button>
+    </div>`);
+
+  const photo = document.getElementById('detailPhoto');
+  if (photo) photo.onclick = () => openLightbox(g.photo);
+  document.getElementById('dClose').onclick = closeModal;
+  const edit = document.getElementById('dEdit');
+  if (edit) edit.onclick = () => requireUnlock(() => openGoalModal(g.id));
+  const buy = document.getElementById('dBuy');
+  if (buy) buy.onclick = () => requireUnlock(() => buyGoal(g.id));
+  document.getElementById('dDel').onclick = () => requireUnlock(() => {
+    state.goals = state.goals.filter(x => x.id !== g.id);
+    closeModal(); render(); showToast(g.achieved ? 'Removed from Achieved' : 'Goal removed');
   });
 }
+
 function openGoalModal(id){
   const kid = selectedKid();
   if (!kid) return;
@@ -821,14 +847,14 @@ function openGoalModal(id){
     </div>
     <div class="field"><label>Photo (optional)</label>
       <div class="photo-actions">
-        <label class="btn btn-outline" style="cursor:pointer">
-          📷 Add photo
-          <input type="file" id="gPhoto" accept="image/*" capture="environment" class="sr-only">
-        </label>
-        <button type="button" class="btn btn-outline ${draftPhoto?'':'hidden'}" id="gPhotoRemove">Remove photo</button>
+        <button type="button" class="btn btn-outline" id="btnPickLibrary">🖼️ Choose from Photos</button>
+        <button type="button" class="btn btn-outline" id="btnTakePhoto">📷 Take Photo</button>
+        <button type="button" class="btn btn-outline ${draftPhoto?'':'hidden'}" id="gPhotoRemove">Remove</button>
       </div>
+      <input type="file" id="gPhotoLibrary" accept="image/*" class="file-hidden" tabindex="-1" aria-hidden="true">
+      <input type="file" id="gPhotoCamera" accept="image/*" capture="environment" class="file-hidden" tabindex="-1" aria-hidden="true">
       <img id="gPhotoPreview" class="photo-preview ${draftPhoto?'':'hidden'}" alt="Preview" ${draftPhoto?`src="${draftPhoto}"`:''}>
-      <p style="color:var(--muted);font-size:.8rem;margin:6px 0 0">Photos are saved on this phone. Keep them small — the app compresses them for you.</p>
+      <p style="color:var(--muted);font-size:.8rem;margin:6px 0 0">Photos stay on this phone. Library &amp; camera both work — HEIC is converted automatically.</p>
     </div>
     <div class="field"><label>Name</label><input id="gName" value="${escapeHtml(g?g.name:'')}" placeholder="${escapeHtml(phName)}"></div>
     <div class="field"><label>Price ($)</label><input id="gPrice" type="number" min="0.01" step="0.25" value="${g?g.price:10}" inputmode="decimal"></div>
@@ -869,6 +895,8 @@ function openGoalModal(id){
 
   const preview = document.getElementById('gPhotoPreview');
   const removeBtn = document.getElementById('gPhotoRemove');
+  const libInput = document.getElementById('gPhotoLibrary');
+  const camInput = document.getElementById('gPhotoCamera');
   const updatePreview = () => {
     if (draftPhoto) {
       preview.src = draftPhoto;
@@ -880,8 +908,9 @@ function openGoalModal(id){
       removeBtn.classList.add('hidden');
     }
   };
-  document.getElementById('gPhoto').onchange = async (e) => {
+  const onPickFile = async (e) => {
     const file = e.target.files && e.target.files[0];
+    e.target.value = '';
     if (!file) return;
     try {
       showToast('Processing photo…');
@@ -890,11 +919,14 @@ function openGoalModal(id){
       showToast('Photo ready');
     } catch (err) {
       console.warn(err);
-      showToast('Could not read that photo');
-      draftPhoto = draftPhoto; // keep previous
+      showToast('Could not use that photo — try another or take a new one');
     }
-    e.target.value = '';
   };
+  // Trigger file inputs from a real user-gesture click (iOS-safe; no display:none)
+  document.getElementById('btnPickLibrary').onclick = () => { libInput.click(); };
+  document.getElementById('btnTakePhoto').onclick = () => { camInput.click(); };
+  libInput.onchange = onPickFile;
+  camInput.onchange = onPickFile;
   removeBtn.onclick = () => { draftPhoto = null; updatePreview(); };
 
   document.getElementById('mCancel').onclick = closeModal;
@@ -926,33 +958,52 @@ function openGoalModal(id){
 }
 
 function compressImageFile(file, maxSide = 600, quality = 0.75){
-  return new Promise((resolve, reject) => {
-    if (!file || !file.type || !file.type.startsWith('image/')) {
-      reject(new Error('not an image'));
-      return;
+  return new Promise(async (resolve, reject) => {
+    if (!file) { reject(new Error('no file')); return; }
+    const type = (file.type || '').toLowerCase();
+    // iOS may give empty type or image/heic — still try to decode
+    const looksImage = !type || type.startsWith('image/') || /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(file.name||'');
+    if (!looksImage) { reject(new Error('not an image')); return; }
+
+    const drawToDataUrl = (source, w0, h0) => {
+      let w = w0, h = h0;
+      if (!w || !h) throw new Error('bad size');
+      const scale = Math.min(1, maxSide / Math.max(w, h));
+      w = Math.max(1, Math.round(w * scale));
+      h = Math.max(1, Math.round(h * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(source, 0, 0, w, h);
+      let dataUrl = canvas.toDataURL('image/jpeg', quality);
+      if (dataUrl.length > 450000) dataUrl = canvas.toDataURL('image/jpeg', 0.55);
+      if (dataUrl.length > 700000) dataUrl = canvas.toDataURL('image/jpeg', 0.4);
+      return dataUrl;
+    };
+
+    // Prefer createImageBitmap (handles many formats iOS converts for us)
+    if (typeof createImageBitmap === 'function') {
+      try {
+        const bmp = await createImageBitmap(file);
+        try {
+          const dataUrl = drawToDataUrl(bmp, bmp.width, bmp.height);
+          try { bmp.close && bmp.close(); } catch(e){}
+          resolve(dataUrl);
+          return;
+        } catch (e) {
+          try { bmp.close && bmp.close(); } catch(e2){}
+          // fall through to Image()
+        }
+      } catch (e) {
+        // fall through
+      }
     }
+
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
       try {
-        let w = img.naturalWidth || img.width;
-        let h = img.naturalHeight || img.height;
-        if (!w || !h) { URL.revokeObjectURL(url); reject(new Error('bad size')); return; }
-        const scale = Math.min(1, maxSide / Math.max(w, h));
-        w = Math.max(1, Math.round(w * scale));
-        h = Math.max(1, Math.round(h * scale));
-        const canvas = document.createElement('canvas');
-        canvas.width = w; canvas.height = h;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, w, h);
-        let dataUrl = canvas.toDataURL('image/jpeg', quality);
-        // If still huge (>450KB), try harder compression
-        if (dataUrl.length > 450000) {
-          dataUrl = canvas.toDataURL('image/jpeg', 0.55);
-        }
-        if (dataUrl.length > 700000) {
-          dataUrl = canvas.toDataURL('image/jpeg', 0.4);
-        }
+        const dataUrl = drawToDataUrl(img, img.naturalWidth || img.width, img.naturalHeight || img.height);
         URL.revokeObjectURL(url);
         resolve(dataUrl);
       } catch (e) {
@@ -988,6 +1039,7 @@ function buyGoal(id){
   g.achieved = true;
   g.achievedAt = Date.now();
   lastAction = { type: 'add', kidId: kid.id, entryId: entry.id };
+  closeModal();
   render();
   showToast(`Bought ${g.emoji||'🎯'} ${g.name}!`, true);
 }
