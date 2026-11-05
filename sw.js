@@ -1,4 +1,4 @@
-const CACHE = 'chore-tracker-v1';
+const CACHE = 'chore-tracker-v2';
 const ASSETS = [
   './',
   './index.html',
