@@ -206,6 +206,33 @@ button { cursor: pointer; border: none; background: none; }
 .cat-progress { color: var(--muted); font-size: .82rem; font-weight: 700; white-space: nowrap; }
 .field-check { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 4px 0; }
 .field-check input { width: 22px; height: 22px; accent-color: var(--primary); }
+
+.emoji-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.emoji-pick { width: 44px; height: 44px; border-radius: 12px; background: #EEF2FF; font-size: 1.4rem;
+  display: grid; place-items: center; }
+.emoji-pick:active, .emoji-pick.active { background: var(--primary); transform: scale(.96); }
+.goal-photo-wrap { position: relative; width: 100%; height: 180px; border-radius: 16px; overflow: hidden;
+  margin-bottom: 12px; background: #E0E7FF; }
+.goal-photo { width: 100%; height: 100%; object-fit: cover; display: block;
+  transition: filter .45s ease, opacity .45s ease; cursor: zoom-in; }
+.goal-photo-fallback { width: 100%; height: 100%; display: grid; place-items: center; font-size: 4rem; background: #EEF2FF; }
+.goal-bar-fill { transition: width .55s cubic-bezier(.2,.8,.2,1); }
+.goal-confetti { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.goal-confetti i { position: absolute; top: -10px; width: 8px; height: 8px; border-radius: 2px;
+  animation: confetti-fall 1.4s ease-in forwards; opacity: .95; }
+@keyframes confetti-fall {
+  0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(200px) rotate(420deg); opacity: 0; }
+}
+.lightbox { position: fixed; inset: 0; background: rgba(15,23,42,.92); z-index: 300; display: none;
+  align-items: center; justify-content: center; padding: 16px; }
+.lightbox.open { display: flex; }
+.lightbox img { max-width: 100%; max-height: 90vh; border-radius: 16px; object-fit: contain; }
+.lightbox-close { position: absolute; top: calc(12px + var(--safe-t)); right: 16px; width: 44px; height: 44px;
+  border-radius: 14px; background: rgba(255,255,255,.15); color: #fff; font-size: 1.4rem; font-weight: 800; }
+.photo-preview { width: 100%; height: 140px; border-radius: 14px; object-fit: cover; background: #EEF2FF; margin-top: 8px; }
+.photo-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.photo-actions .btn { flex: 1; min-width: 120px; min-height: 44px; }
 </style>
 </head>
 <body>
@@ -284,6 +311,7 @@ button { cursor: pointer; border: none; background: none; }
 </div>
 
 <div class="ptr-indicator" id="ptrIndicator">↓ Refresh</div>
+<div class="lightbox" id="lightbox" role="dialog" aria-modal="true"><button class="lightbox-close" id="lightboxClose" aria-label="Close">✕</button><img id="lightboxImg" alt="Goal photo"></div>
 <div class="toast" id="toast"><span id="toastMsg"></span><button id="toastUndo" class="hidden">Undo</button></div>
 
 <div class="modal-backdrop" id="modal">
@@ -292,7 +320,7 @@ button { cursor: pointer; border: none; background: none; }
 
 <script>
 const STORAGE_KEY = 'chore-tracker-v1';
-const CHORES_DATA_VERSION = 3;
+const CHORES_DATA_VERSION = 4;
 const CATEGORIES = [
   { id: 'morning', name: 'Morning', emoji: '☀️' },
   { id: 'afterschool', name: 'After School', emoji: '🎒' },
@@ -365,33 +393,40 @@ function loadState(){
 }
 function migrateChores(s){
   const ver = Number(s.choresDataVersion) || 0;
-  if (ver >= CHORES_DATA_VERSION) {
-    // Still normalize any missing category field defensively without re-adding deleted chores
-    for (const c of (s.chores || [])) {
-      if (!c.category) c.category = CATEGORY_BY_NAME[String(c.name||'').trim().toLowerCase()] || 'general';
-    }
-    return;
-  }
-  // Assign categories to existing chores by case-insensitive name (unknown -> General).
-  // Add any new default chores missing by name exactly once.
-  // Never alter balances, history, goals, or existing amounts.
+  // Always normalize missing category fields (never re-add deleted chores here).
   for (const c of (s.chores || [])) {
-    const key = String(c.name || '').trim().toLowerCase();
-    if (!c.category) c.category = CATEGORY_BY_NAME[key] || 'general';
-  }
-  const have = new Set((s.chores || []).map(c => String(c.name || '').trim().toLowerCase()));
-  for (const def of DEFAULT_CHORES) {
-    const key = def.name.trim().toLowerCase();
-    if (!have.has(key)) {
-      s.chores.push({ id: uid('c'), name: def.name, amount: def.amount, emoji: def.emoji, category: def.category });
-      have.add(key);
-    }
+    if (!c.category) c.category = CATEGORY_BY_NAME[String(c.name||'').trim().toLowerCase()] || 'general';
   }
   if (!s.collapsedCategories || typeof s.collapsedCategories !== 'object') s.collapsedCategories = {};
+  if (!Array.isArray(s.goals)) s.goals = [];
+  if (ver >= CHORES_DATA_VERSION) return;
+
+  // Seed default chores only when upgrading from before the last chore-list version (3).
+  // Later bumps (e.g. 3→4 photos) must NOT re-add chores the parent deleted.
+  // Never alter balances, history, goals, or existing amounts.
+  if (ver < 3) {
+    const have = new Set((s.chores || []).map(c => String(c.name || '').trim().toLowerCase()));
+    for (const def of DEFAULT_CHORES) {
+      const key = def.name.trim().toLowerCase();
+      if (!have.has(key)) {
+        s.chores.push({ id: uid('c'), name: def.name, amount: def.amount, emoji: def.emoji, category: def.category });
+        have.add(key);
+      }
+    }
+  }
   s.choresDataVersion = CHORES_DATA_VERSION;
 }
 function saveState(){
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (err) {
+    const quota = err && (err.name === 'QuotaExceededError' || err.code === 22 || err.code === 1014);
+    if (quota) {
+      showToast('Storage full — try a smaller photo or remove old ones');
+      throw err;
+    }
+    throw err;
+  }
 }
 
 function money(n){
@@ -671,6 +706,18 @@ function renderGoals(){
       const toGo = Math.max(0, Math.round((price - bal)*100)/100);
       const ready = bal + 0.001 >= price;
       const choresLeft = ready ? 0 : Math.ceil(toGo / avg);
+      // Greyscale fades out as progress rises (full color at 100%)
+      const grey = Math.max(0, Math.min(100, 100 - pct));
+      const fade = Math.max(0.55, pct / 100);
+      const photoHtml = g.photo
+        ? `<div class="goal-photo-wrap">
+             <img class="goal-photo" data-photo="${g.id}" src="${g.photo}" alt="${escapeHtml(g.name)}"
+               style="filter: grayscale(${grey}%) opacity(${fade});">
+             ${ready ? `<div class="goal-confetti" data-confetti="${g.id}"></div>` : ''}
+           </div>`
+        : `<div class="goal-photo-wrap"><div class="goal-photo-fallback">${g.emoji||'🎯'}</div>
+             ${ready ? `<div class="goal-confetti" data-confetti="${g.id}"></div>` : ''}
+           </div>`;
       return `<div class="goal-card ${ready?'ready':''}" data-goal="${g.id}">
         <div class="goal-top">
           <div class="goal-emoji">${g.emoji||'🎯'}</div>
@@ -682,6 +729,7 @@ function renderGoals(){
             <button data-gedit="${g.id}" title="Edit" aria-label="Edit">✏️</button>
           </div>
         </div>
+        ${photoHtml}
         <div class="goal-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">
           <div class="goal-bar-fill" style="width:${pct}%"></div>
         </div>
@@ -710,6 +758,9 @@ function renderGoals(){
             <button data-gdel="${g.id}" title="Remove" aria-label="Remove">🗑️</button>
           </div>
         </div>
+        ${g.photo ? `<div class="goal-photo-wrap" style="height:100px;margin-top:8px;margin-bottom:0">
+          <img class="goal-photo" data-photo="${g.id}" src="${g.photo}" alt="${escapeHtml(g.name)}" style="filter:none;opacity:1">
+        </div>` : ''}
       </div>`).join('');
   } else {
     wrap.classList.add('hidden');
@@ -720,6 +771,27 @@ function renderGoals(){
   });
   el.querySelectorAll('[data-gbuy]').forEach(btn => {
     btn.onclick = (e) => { e.stopPropagation(); requireUnlock(() => buyGoal(btn.dataset.gbuy)); };
+  });
+  const bindPhotos = (root) => {
+    root.querySelectorAll('img.goal-photo[data-photo]').forEach(img => {
+      img.onclick = (e) => { e.stopPropagation(); openLightbox(img.src); };
+    });
+  };
+  bindPhotos(el);
+  bindPhotos(achEl);
+  // Fun confetti burst for ready goals
+  el.querySelectorAll('[data-confetti]').forEach(box => {
+    if (box.dataset.burst) return;
+    box.dataset.burst = '1';
+    const colors = ['#F59E0B','#EF4444','#10B981','#6366F1','#EC4899','#06B6D4'];
+    for (let i = 0; i < 18; i++) {
+      const d = document.createElement('i');
+      d.style.left = (Math.random()*100) + '%';
+      d.style.background = colors[i % colors.length];
+      d.style.animationDelay = (Math.random()*0.35) + 's';
+      d.style.transform = `rotate(${Math.random()*180}deg)`;
+      box.appendChild(d);
+    }
   });
   achEl.querySelectorAll('[data-gdel]').forEach(btn => {
     btn.onclick = () => requireUnlock(() => {
@@ -734,9 +806,30 @@ function openGoalModal(id){
   const g = id ? state.goals.find(x => x.id===id) : null;
   const isNew = !g;
   const phName = kid.name === 'Lev' ? 'Paw Patrol toy' : 'American Dream Mall trip';
+  const PICK_EMOJIS = ['🧸','🎮','🚲','🎢','🏀','⚽','🎨','📚','🍦','🍕','🐶','🚗','🎯','🎬','🛍️','🎁'];
+  let draftEmoji = (g && g.emoji) ? g.emoji : '🎯';
+  let draftPhoto = (g && g.photo) ? g.photo : null; // data URL or null
   openModal(`
     <h2>${isNew?'Add goal':'Edit goal'}</h2>
-    <div class="field"><label>Emoji</label><input id="gEmoji" maxlength="4" value="${escapeHtml(g?g.emoji||'🎯':'🎯')}"></div>
+    <div class="field"><label>Emoji</label>
+      <input id="gEmoji" type="text" inputmode="text" autocomplete="off" enterkeyhint="done"
+        value="${escapeHtml(draftEmoji)}" placeholder="🎯" aria-label="Goal emoji"
+        style="font-size:1.6rem;text-align:center;letter-spacing:.05em">
+      <div class="emoji-grid" id="emojiGrid">
+        ${PICK_EMOJIS.map(e => `<button type="button" class="emoji-pick" data-emoji="${e}">${e}</button>`).join('')}
+      </div>
+    </div>
+    <div class="field"><label>Photo (optional)</label>
+      <div class="photo-actions">
+        <label class="btn btn-outline" style="cursor:pointer">
+          📷 Add photo
+          <input type="file" id="gPhoto" accept="image/*" capture="environment" class="sr-only">
+        </label>
+        <button type="button" class="btn btn-outline ${draftPhoto?'':'hidden'}" id="gPhotoRemove">Remove photo</button>
+      </div>
+      <img id="gPhotoPreview" class="photo-preview ${draftPhoto?'':'hidden'}" alt="Preview" ${draftPhoto?`src="${draftPhoto}"`:''}>
+      <p style="color:var(--muted);font-size:.8rem;margin:6px 0 0">Photos are saved on this phone. Keep them small — the app compresses them for you.</p>
+    </div>
     <div class="field"><label>Name</label><input id="gName" value="${escapeHtml(g?g.name:'')}" placeholder="${escapeHtml(phName)}"></div>
     <div class="field"><label>Price ($)</label><input id="gPrice" type="number" min="0.01" step="0.25" value="${g?g.price:10}" inputmode="decimal"></div>
     <div class="modal-actions">
@@ -744,19 +837,86 @@ function openGoalModal(id){
       ${!isNew?'<button class="btn btn-danger" id="mDel">Delete</button>':''}
       <button class="btn btn-primary" id="mSave" style="background:var(--primary);color:#fff">Save</button>
     </div>`);
+
+  const emojiInput = document.getElementById('gEmoji');
+  // Do NOT use a tiny maxlength — ZWJ / skin-tone emojis need many UTF-16 units.
+  // Soft-cap by grapheme clusters after input instead of blocking the keyboard.
+  const syncEmojiPicks = () => {
+    document.querySelectorAll('#emojiGrid .emoji-pick').forEach(b => {
+      b.classList.toggle('active', b.dataset.emoji === emojiInput.value);
+    });
+  };
+  emojiInput.addEventListener('input', () => {
+    // Keep at most ~8 grapheme clusters (enough for complex emoji sequences)
+    try {
+      const seg = Intl.Segmenter ? [...new Intl.Segmenter(undefined,{granularity:'grapheme'}).segment(emojiInput.value)].map(s=>s.segment) : null;
+      if (seg && seg.length > 8) {
+        emojiInput.value = seg.slice(0, 8).join('');
+      }
+    } catch(e) {}
+    draftEmoji = emojiInput.value;
+    syncEmojiPicks();
+  });
+  document.querySelectorAll('#emojiGrid .emoji-pick').forEach(b => {
+    b.onclick = () => {
+      emojiInput.value = b.dataset.emoji;
+      draftEmoji = b.dataset.emoji;
+      syncEmojiPicks();
+      emojiInput.focus();
+    };
+  });
+  syncEmojiPicks();
+
+  const preview = document.getElementById('gPhotoPreview');
+  const removeBtn = document.getElementById('gPhotoRemove');
+  const updatePreview = () => {
+    if (draftPhoto) {
+      preview.src = draftPhoto;
+      preview.classList.remove('hidden');
+      removeBtn.classList.remove('hidden');
+    } else {
+      preview.removeAttribute('src');
+      preview.classList.add('hidden');
+      removeBtn.classList.add('hidden');
+    }
+  };
+  document.getElementById('gPhoto').onchange = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    try {
+      showToast('Processing photo…');
+      draftPhoto = await compressImageFile(file, 600, 0.75);
+      updatePreview();
+      showToast('Photo ready');
+    } catch (err) {
+      console.warn(err);
+      showToast('Could not read that photo');
+      draftPhoto = draftPhoto; // keep previous
+    }
+    e.target.value = '';
+  };
+  removeBtn.onclick = () => { draftPhoto = null; updatePreview(); };
+
   document.getElementById('mCancel').onclick = closeModal;
   document.getElementById('mSave').onclick = () => {
     const name = document.getElementById('gName').value.trim();
     const price = Number(document.getElementById('gPrice').value);
-    const emoji = document.getElementById('gEmoji').value.trim() || '🎯';
+    // Prefer live input value (supports pasted ZWJ sequences); fall back to draft / default
+    const emoji = (emojiInput.value || draftEmoji || '🎯').trim() || '🎯';
     if (!name) { showToast('Name required'); return; }
     if (!(price > 0)) { showToast('Enter a price'); return; }
     if (isNew) {
-      state.goals.push({ id: uid('g'), kidId: kid.id, name, price, emoji, achieved: false });
+      state.goals.push({ id: uid('g'), kidId: kid.id, name, price, emoji, photo: draftPhoto || null, achieved: false });
     } else {
-      g.name = name; g.price = price; g.emoji = emoji;
+      g.name = name; g.price = price; g.emoji = emoji; g.photo = draftPhoto || null;
     }
-    closeModal(); render();
+    closeModal();
+    // saveState inside render — catch quota
+    try {
+      render();
+    } catch (err) {
+      showToast('Could not save — storage may be full');
+    }
   };
   const del = document.getElementById('mDel');
   if (del) del.onclick = () => {
@@ -764,6 +924,57 @@ function openGoalModal(id){
     closeModal(); render(); showToast('Goal removed');
   };
 }
+
+function compressImageFile(file, maxSide = 600, quality = 0.75){
+  return new Promise((resolve, reject) => {
+    if (!file || !file.type || !file.type.startsWith('image/')) {
+      reject(new Error('not an image'));
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        let w = img.naturalWidth || img.width;
+        let h = img.naturalHeight || img.height;
+        if (!w || !h) { URL.revokeObjectURL(url); reject(new Error('bad size')); return; }
+        const scale = Math.min(1, maxSide / Math.max(w, h));
+        w = Math.max(1, Math.round(w * scale));
+        h = Math.max(1, Math.round(h * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        let dataUrl = canvas.toDataURL('image/jpeg', quality);
+        // If still huge (>450KB), try harder compression
+        if (dataUrl.length > 450000) {
+          dataUrl = canvas.toDataURL('image/jpeg', 0.55);
+        }
+        if (dataUrl.length > 700000) {
+          dataUrl = canvas.toDataURL('image/jpeg', 0.4);
+        }
+        URL.revokeObjectURL(url);
+        resolve(dataUrl);
+      } catch (e) {
+        URL.revokeObjectURL(url);
+        reject(e);
+      }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('load fail')); };
+    img.src = url;
+  });
+}
+function openLightbox(src){
+  if (!src) return;
+  const box = document.getElementById('lightbox');
+  document.getElementById('lightboxImg').src = src;
+  box.classList.add('open');
+}
+function closeLightbox(){
+  document.getElementById('lightbox').classList.remove('open');
+  document.getElementById('lightboxImg').removeAttribute('src');
+}
+
 function buyGoal(id){
   const kid = selectedKid();
   const g = state.goals.find(x => x.id === id);
@@ -907,7 +1118,7 @@ function openChoreModal(id){
   let cat = (c && c.category) || suggestedCategoryId() || 'general';
   openModal(`
     <h2>${isNew?'Add chore':'Edit chore'}</h2>
-    <div class="field"><label>Emoji</label><input id="chEmoji" maxlength="4" value="${escapeHtml(c.emoji||'⭐')}"></div>
+    <div class="field"><label>Emoji</label><input id="chEmoji" maxlength="16" inputmode="text" autocomplete="off" value="${escapeHtml(c.emoji||'⭐')}"></div>
     <div class="field"><label>Name</label><input id="chName" value="${escapeHtml(c.name||'')}" placeholder="Chore name"></div>
     <div class="field"><label>Amount ($)</label><input id="chAmt" type="number" min="0" step="0.25" value="${c.amount||1}" inputmode="decimal"></div>
     <div class="field"><label class="field-check"><input type="checkbox" id="chMulti" ${c.allowMultiple?'checked':''}> Can do more than once a day</label></div>
@@ -1255,6 +1466,11 @@ setInterval(() => {
   }
 }, 60 * 1000);
 
+
+document.getElementById('lightboxClose').onclick = closeLightbox;
+document.getElementById('lightbox').addEventListener('click', (e) => {
+  if (e.target.id === 'lightbox' || e.target.id === 'lightboxClose') closeLightbox();
+});
 document.getElementById('btnRefresh').onclick = () => checkForAppUpdate({ forceReload: true });
 
 /* Simple pull-to-refresh at scroll top (iOS standalone friendly) */
