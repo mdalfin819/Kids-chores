@@ -265,6 +265,33 @@ button { cursor: pointer; border: none; background: none; }
 .detail-photo { width: 100%; height: 200px; border-radius: 16px; object-fit: cover; background: #EEF2FF; margin-bottom: 12px; }
 .detail-photo-fallback { width: 100%; height: 160px; border-radius: 16px; background: #EEF2FF;
   display: grid; place-items: center; font-size: 4rem; margin-bottom: 12px; }
+
+.week-bar { background: var(--card); border-radius: var(--radius); padding: 12px 14px; box-shadow: var(--shadow);
+  display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.week-bar strong { color: var(--primary); font-size: 1.05rem; }
+.week-nav { display: flex; gap: 6px; align-items: center; }
+.week-nav button { min-height: 36px; padding: 6px 10px; border-radius: 10px; background: #EEF2FF; color: var(--primary);
+  font-weight: 800; font-size: .82rem; }
+.week-nav button:disabled { opacity: .4; }
+.day-dots { display: flex; gap: 4px; margin-top: 6px; justify-content: flex-start; flex-wrap: nowrap; }
+.day-dot { width: 28px; height: 28px; min-width: 28px; min-height: 28px; padding: 0; border-radius: 50%;
+  border: 2px solid #C7D2FE; background: #fff; color: var(--muted); font-size: .62rem; font-weight: 800;
+  display: inline-flex; align-items: center; justify-content: center; line-height: 1; position: relative;
+  /* expand hit area without growing visual */
+  box-shadow: 0 0 0 6px transparent; }
+.day-dot:active:not(:disabled) { transform: scale(.94); }
+.day-dot.today { border-color: var(--primary); color: var(--primary); box-shadow: 0 0 0 2px rgba(79,70,229,.2); }
+.day-dot.filled { background: #10B981; border-color: #059669; color: #fff; }
+.day-dot.filled.today { box-shadow: 0 0 0 2px rgba(16,185,129,.35); }
+.day-dot:disabled { opacity: .35; background: #F1F5F9; border-color: #E2E8F0; color: #94A3B8; }
+.day-dot .dot-count { position: absolute; top: -6px; right: -6px; min-width: 14px; height: 14px; padding: 0 3px;
+  border-radius: 999px; background: var(--primary); color: #fff; font-size: .55rem; font-weight: 800;
+  display: grid; place-items: center; }
+.chore-item { flex-wrap: wrap; align-items: flex-start; }
+.chore-item .chore-meta { flex: 1; min-width: 120px; }
+.chore-item .day-dots { width: 100%; padding-left: 56px; /* align under meta past emoji */ }
+.chore-item.done-week { background: #F0FDF4; }
+.chore-check, .chore-count-badge, .chore-done-label { display: none !important; } /* replaced by day dots */
 </style>
 </head>
 <body>
@@ -300,9 +327,15 @@ button { cursor: pointer; border: none; background: none; }
 
   <div id="tabChores">
     <div class="section">
-      <div class="today-bar" id="todayBar">
-        <span>Today: <strong id="todayProgress">0/0 chores</strong></span>
-        <strong id="todayEarned">$0.00 earned</strong>
+      <div class="week-bar" id="todayBar">
+        <div>
+          <div id="weekLabel" style="font-size:.78rem;font-weight:700;color:var(--muted);margin-bottom:2px">This week</div>
+          <span><strong id="todayProgress">0 chores</strong> · <strong id="todayEarned">$0.00 earned</strong></span>
+        </div>
+        <div class="week-nav">
+          <button type="button" id="btnPrevWeek" title="Last week">‹ Last week</button>
+          <button type="button" id="btnThisWeek" class="hidden" title="This week">This week ›</button>
+        </div>
       </div>
       <div class="weekly">
         <span>This week earned</span>
@@ -466,10 +499,16 @@ function money(n){
   return (v < 0 ? '-$' : '$') + Math.abs(v).toFixed(2);
 }
 function startOfWeek(d=new Date()){
+  // Sunday 00:00 local → Saturday end (week resets Sunday)
   const x = new Date(d);
-  const day = (x.getDay()+6)%7; // Mon=0
   x.setHours(0,0,0,0);
-  x.setDate(x.getDate()-day);
+  x.setDate(x.getDate() - x.getDay()); // Sun=0
+  return x.getTime();
+}
+function endOfWeek(d=new Date()){
+  const x = new Date(startOfWeek(d));
+  x.setDate(x.getDate() + 6);
+  x.setHours(23,59,59,999);
   return x.getTime();
 }
 function fmtDate(ts){
@@ -571,6 +610,8 @@ function toggleCategory(catId){
   renderChores();
 }
 
+let weekOffset = 0; // 0 = current Sun–Sat week, -1 = previous week
+
 function localDateKey(ts = Date.now()){
   const d = new Date(ts);
   const y = d.getFullYear();
@@ -578,59 +619,111 @@ function localDateKey(ts = Date.now()){
   const day = String(d.getDate()).padStart(2,'0');
   return `${y}-${m}-${day}`;
 }
-function todaysChoreEntries(kidId, choreId){
-  const key = localDateKey();
+function dateFromKey(key){
+  const [y,m,d] = key.split('-').map(Number);
+  const dt = new Date(y, m-1, d, 12, 0, 0, 0); // noon local avoids DST edge
+  return dt;
+}
+function viewedWeekStart(){
+  const base = new Date(startOfWeek());
+  base.setDate(base.getDate() + (weekOffset * 7));
+  return base.getTime();
+}
+function weekDayKeys(offset = weekOffset){
+  const start = new Date(startOfWeek());
+  start.setDate(start.getDate() + (offset * 7));
+  const keys = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    keys.push(localDateKey(d.getTime()));
+  }
+  return keys; // Sun..Sat
+}
+function choreEntriesOnDate(kidId, choreId, dateKey){
   return state.entries.filter(e =>
-    e.kidId === kidId && e.type === 'chore' && e.choreId === choreId && localDateKey(e.ts) === key
+    e.kidId === kidId && e.type === 'chore' && e.choreId === choreId && localDateKey(e.ts) === dateKey
   );
 }
-function todayStats(kidId){
-  const key = localDateKey();
-  const todayEntries = state.entries.filter(e => e.kidId === kidId && e.type === 'chore' && localDateKey(e.ts) === key);
-  const earned = todayEntries.reduce((s,e)=>s+Number(e.amount||0), 0);
+function todaysChoreEntries(kidId, choreId){
+  return choreEntriesOnDate(kidId, choreId, localDateKey());
+}
+function weekStats(kidId){
+  const keys = new Set(weekDayKeys());
+  const weekEntries = state.entries.filter(e =>
+    e.kidId === kidId && e.type === 'chore' && keys.has(localDateKey(e.ts))
+  );
+  const earned = weekEntries.reduce((s,e)=>s+Number(e.amount||0), 0);
   let done = 0;
-  const total = state.chores.length;
   for (const c of state.chores) {
-    if (todayEntries.some(e => e.choreId === c.id)) done++;
+    if (weekEntries.some(e => e.choreId === c.id)) done++;
   }
-  return { done, total, earned, todayEntries };
+  return { done, total: state.chores.length, earned, count: weekEntries.length, weekEntries };
+}
+function todayStats(kidId){ // kept as alias for any leftover callers
+  return weekStats(kidId);
+}
+function fmtWeekRange(){
+  const keys = weekDayKeys();
+  const a = dateFromKey(keys[0]);
+  const b = dateFromKey(keys[6]);
+  const opts = { month:'short', day:'numeric' };
+  return a.toLocaleDateString(undefined, opts) + ' – ' + b.toLocaleDateString(undefined, opts);
 }
 
+
 function choreItemHtml(c, kidId){
-  const entries = todaysChoreEntries(kidId, c.id);
-  const count = entries.length;
+  const keys = weekDayKeys();
+  const todayKey = localDateKey();
+  const labels = ['S','M','T','W','T','F','S'];
+  const erevOnly = c.category === 'erevshabbos';
   const multi = !!c.allowMultiple;
-  const done = count > 0;
-  let statusHtml = `<div class="chore-check" aria-hidden="true">✓</div>`;
-  if (multi && count > 0) {
-    statusHtml = `<div class="chore-count-badge" title="Done ${count}× today">×${count}</div>`;
-  }
-  return `<div class="chore-item ${done?'done-today':''}" role="button" tabindex="0" data-chore="${c.id}" data-done="${done?'1':'0'}">
+  let anyThisWeek = false;
+  const dots = keys.map((key, i) => {
+    if (erevOnly && i !== 5) return ''; // Friday only for Erev Shabbos
+    const entries = choreEntriesOnDate(kidId, c.id, key);
+    const count = entries.length;
+    if (count) anyThisWeek = true;
+    const isToday = key === todayKey;
+    const isFuture = dateFromKey(key).setHours(0,0,0,0) > new Date().setHours(0,0,0,0);
+    const filled = count > 0;
+    const disabled = isFuture ? 'disabled' : '';
+    const cls = ['day-dot', isToday?'today':'', filled?'filled':''].filter(Boolean).join(' ');
+    const title = `${labels[i]} ${key}${filled ? ' · done'+(multi && count>1?' ×'+count:'') : ''}${isFuture?' (future)':''}`;
+    const countBadge = (multi && count > 1) ? `<span class="dot-count">${count}</span>` : (multi && count===1 ? `<span class="dot-count">1</span>` : '');
+    return `<button type="button" class="${cls}" data-day-chore="${c.id}" data-day-key="${key}"
+      ${disabled} title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${labels[i]}${countBadge}</button>`;
+  }).join('');
+
+  return `<div class="chore-item ${anyThisWeek?'done-week':''}" role="button" tabindex="0" data-chore="${c.id}">
       <div class="chore-emoji">${c.emoji||'⭐'}</div>
       <div class="chore-meta">
         <div class="chore-name">${escapeHtml(c.name)}</div>
         <div class="chore-pay">${money(c.amount)}</div>
-        ${done && !multi ? '<div class="chore-done-label">Done today</div>' : ''}
-        ${done && multi ? `<div class="chore-done-label">Done today${count>1?' ×'+count:''} · tap to add</div>` : ''}
       </div>
-      ${statusHtml}
       <button class="chore-edit" data-edit="${c.id}" title="Edit" aria-label="Edit">✏️</button>
+      <div class="day-dots" data-dots-for="${c.id}">${dots}</div>
     </div>`;
 }
 function bindChoreRows(root){
   root.querySelectorAll('[data-chore]').forEach(row => {
     row.addEventListener('click', (e) => {
       if (e.target.closest('[data-edit]')) return;
+      if (e.target.closest('[data-day-chore]')) return; // handled by day dots
       const id = row.dataset.chore;
       const chore = state.chores.find(c => c.id === id);
       if (!chore) return;
       const kid = selectedKid();
       if (!kid) return;
+      if (weekOffset !== 0) {
+        // Viewing last week — row tap shouldn't log "today"; use dots instead
+        showToast('Tap a day circle to log or undo');
+        return;
+      }
       const todays = todaysChoreEntries(kid.id, id);
       if (todays.length && !chore.allowMultiple) {
-        // Ask to undo today's log
         if (confirm(`Undo "${chore.name}" for today? This removes the $${Number(chore.amount).toFixed(2)} earned.`)) {
-          undoTodayChore(kid.id, id);
+          undoChoreOnDate(kid.id, id, localDateKey());
         }
         return;
       }
@@ -640,31 +733,100 @@ function bindChoreRows(root){
   root.querySelectorAll('[data-edit]').forEach(btn => {
     btn.onclick = (e) => { e.stopPropagation(); requireUnlock(() => openChoreModal(btn.dataset.edit)); };
   });
+  root.querySelectorAll('[data-day-chore]').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      if (btn.disabled) return;
+      const choreId = btn.dataset.dayChore;
+      const dateKey = btn.dataset.dayKey;
+      const act = () => toggleChoreDay(choreId, dateKey);
+      // Editing a past week is PIN-gated; current week day taps are open (kids can log)
+      if (weekOffset !== 0) requireUnlock(act);
+      else act();
+    };
+  });
 }
-function undoTodayChore(kidId, choreId){
-  const todays = todaysChoreEntries(kidId, choreId);
-  if (!todays.length) return;
-  // Remove the most recent one today (or all if single-mode — remove all today's for that chore)
+function toggleChoreDay(choreId, dateKey){
+  const kid = selectedKid();
+  if (!kid) return;
   const chore = state.chores.find(c => c.id === choreId);
-  const toRemove = chore && chore.allowMultiple ? [todays.sort((a,b)=>b.ts-a.ts)[0]] : todays;
+  if (!chore) return;
+  const dayStart = dateFromKey(dateKey); dayStart.setHours(0,0,0,0);
+  const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+  if (dayStart.getTime() > todayStart.getTime()) {
+    showToast('That day is in the future');
+    return;
+  }
+  const existing = choreEntriesOnDate(kid.id, choreId, dateKey);
+  if (existing.length && !chore.allowMultiple) {
+    const label = dateKey === localDateKey() ? 'today' : dateKey;
+    if (confirm(`Undo "${chore.name}" for ${label}? This removes the $${Number(chore.amount).toFixed(2)} earned.`)) {
+      undoChoreOnDate(kid.id, choreId, dateKey);
+    }
+    return;
+  }
+  logChoreOnDate(choreId, dateKey);
+}
+function undoChoreOnDate(kidId, choreId, dateKey){
+  const entries = choreEntriesOnDate(kidId, choreId, dateKey);
+  if (!entries.length) return;
+  const chore = state.chores.find(c => c.id === choreId);
+  const toRemove = chore && chore.allowMultiple ? [entries.sort((a,b)=>b.ts-a.ts)[0]] : entries;
   const ids = new Set(toRemove.map(e => e.id));
   state.entries = state.entries.filter(e => !ids.has(e.id));
   lastAction = null;
   render();
-  showToast('Undone for today');
+  showToast('Undone');
 }
+function undoTodayChore(kidId, choreId){
+  undoChoreOnDate(kidId, choreId, localDateKey());
+}
+function logChoreOnDate(choreId, dateKey){
+  const kid = selectedKid();
+  if (!kid) return;
+  const chore = state.chores.find(c => c.id === choreId);
+  if (!chore) return;
+  const existing = choreEntriesOnDate(kid.id, choreId, dateKey);
+  if (existing.length && !chore.allowMultiple) {
+    showToast('Already logged that day');
+    return;
+  }
+  const dayStart = dateFromKey(dateKey); dayStart.setHours(0,0,0,0);
+  const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+  if (dayStart.getTime() > todayStart.getTime()) {
+    showToast('That day is in the future');
+    return;
+  }
+  // Stamp entry at noon that day (or now if today) so it sorts sensibly and matches the date key
+  let ts = dateFromKey(dateKey).getTime();
+  if (dateKey === localDateKey()) ts = Date.now();
+  const entry = { id: uid('e'), kidId: kid.id, type: 'chore', choreId: chore.id,
+    name: chore.name, amount: Number(chore.amount), ts, emoji: chore.emoji };
+  state.entries.push(entry);
+  lastAction = { type: 'add', kidId: kid.id, entryId: entry.id };
+  render();
+  const when = dateKey === localDateKey() ? '' : ` (${dateKey})`;
+  showToast(`${chore.emoji||'⭐'} ${chore.name} +${money(chore.amount)}${when}`, true);
+}
+
 function renderChores(){
   const el = document.getElementById('choreList');
   const kid = selectedKid();
   const kidId = kid ? kid.id : null;
 
-  // Today summary
+  // Week summary (Sun–Sat of viewed week)
   if (kidId) {
-    const st = todayStats(kidId);
+    const st = weekStats(kidId);
     const tp = document.getElementById('todayProgress');
     const te = document.getElementById('todayEarned');
-    if (tp) tp.textContent = `${st.done}/${st.total} chores`;
+    const wl = document.getElementById('weekLabel');
+    if (tp) tp.textContent = `${st.count} chore${st.count===1?'':'s'}`;
     if (te) te.textContent = `${money(st.earned)} earned`;
+    if (wl) wl.textContent = (weekOffset === 0 ? 'This week' : 'Last week') + ' · ' + fmtWeekRange();
+    const prev = document.getElementById('btnPrevWeek');
+    const cur = document.getElementById('btnThisWeek');
+    if (prev) prev.classList.toggle('hidden', weekOffset !== 0);
+    if (cur) cur.classList.toggle('hidden', weekOffset === 0);
   }
 
   if (!state.chores.length) {
@@ -685,12 +847,15 @@ function renderChores(){
     const items = byCat[cat.id] || [];
     if (!items.length) return '';
     const collapsed = isCategoryCollapsed(cat.id);
-    const doneCount = items.filter(c => todaysChoreEntries(kidId, c.id).length > 0).length;
+    const weekKeys = new Set(weekDayKeys());
+    const doneCount = items.filter(c => state.entries.some(e =>
+      e.kidId===kidId && e.type==='chore' && e.choreId===c.id && weekKeys.has(localDateKey(e.ts))
+    )).length;
     return `<div class="cat-section ${collapsed?'collapsed':''}" data-cat="${cat.id}">
       <button type="button" class="cat-header" data-toggle-cat="${cat.id}" aria-expanded="${!collapsed}">
         <span class="cat-emoji">${cat.emoji}</span>
         <span class="cat-title">${escapeHtml(cat.name)}</span>
-        <span class="cat-progress">${doneCount}/${items.length} done</span>
+        <span class="cat-progress">${doneCount}/${items.length} this week</span>
         <span class="cat-chevron">▼</span>
       </button>
       <div class="cat-body">${items.map(c => choreItemHtml(c, kidId)).join('')}</div>
@@ -1072,21 +1237,7 @@ function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;',
 
 /* ---------- Actions ---------- */
 function logChore(choreId){
-  const kid = selectedKid();
-  if (!kid) return;
-  const chore = state.chores.find(c => c.id === choreId);
-  if (!chore) return;
-  const todays = todaysChoreEntries(kid.id, choreId);
-  if (todays.length && !chore.allowMultiple) {
-    showToast('Already done today — tap again to undo');
-    return;
-  }
-  const entry = { id: uid('e'), kidId: kid.id, type: 'chore', choreId: chore.id,
-    name: chore.name, amount: Number(chore.amount), ts: Date.now(), emoji: chore.emoji };
-  state.entries.push(entry);
-  lastAction = { type: 'add', kidId: kid.id, entryId: entry.id };
-  render();
-  showToast(`${chore.emoji||'⭐'} ${chore.name} +${money(chore.amount)}`, true);
+  logChoreOnDate(choreId, localDateKey());
 }
 function undoLast(){
   if (!lastAction) return;
@@ -1496,15 +1647,17 @@ if ('serviceWorker' in navigator) {
 
 
 let lastSeenDateKey = localDateKey();
+let lastSeenWeekStart = startOfWeek();
 function refreshIfNewDay(){
   const key = localDateKey();
-  if (key !== lastSeenDateKey) {
-    lastSeenDateKey = key;
-    render();
-  } else {
-    // Still re-render on resume so checklist reflects any changes
-    render();
-  }
+  const weekStart = startOfWeek();
+  const newDay = key !== lastSeenDateKey;
+  const newWeek = weekStart !== lastSeenWeekStart;
+  lastSeenDateKey = key;
+  lastSeenWeekStart = weekStart;
+  if (newWeek) weekOffset = 0;
+  // Re-render on resume / day change so Sunday rollover clears dots
+  render();
 }
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') refreshIfNewDay();
@@ -1523,6 +1676,10 @@ document.getElementById('lightboxClose').onclick = closeLightbox;
 document.getElementById('lightbox').addEventListener('click', (e) => {
   if (e.target.id === 'lightbox' || e.target.id === 'lightboxClose') closeLightbox();
 });
+
+document.getElementById('btnPrevWeek').onclick = () => { weekOffset = -1; render(); };
+document.getElementById('btnThisWeek').onclick = () => { weekOffset = 0; render(); };
+
 document.getElementById('btnRefresh').onclick = () => checkForAppUpdate({ forceReload: true });
 
 /* Simple pull-to-refresh at scroll top (iOS standalone friendly) */
