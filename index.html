@@ -385,7 +385,7 @@ button { cursor: pointer; border: none; background: none; }
 
 <script>
 const STORAGE_KEY = 'chore-tracker-v1';
-const CHORES_DATA_VERSION = 5;
+const CHORES_DATA_VERSION = 6;
 const CATEGORIES = [
   { id: 'morning', name: 'Morning', emoji: '☀️' },
   { id: 'afterschool', name: 'After School', emoji: '🎒' },
@@ -394,27 +394,27 @@ const CATEGORIES = [
   { id: 'erevshabbos', name: 'Erev Shabbos', emoji: '🕯️' },
 ];
 const DEFAULT_CHORES = [
-  { id: 'c1', name: 'Make bed', amount: 0.5, emoji: '🛏️', category: 'morning' },
-  { id: 'c13', name: 'Brush teeth morning & night', amount: 0.25, emoji: '🪥', category: 'morning' },
-  { id: 'c14', name: 'Get dressed & ready on time', amount: 0.5, emoji: '👔', category: 'morning' },
-  { id: 'c8', name: 'Homework right after school', amount: 1, emoji: '📚', category: 'afterschool' },
-  { id: 'c12', name: 'Put shoes & backpack away', amount: 0.25, emoji: '🎒', category: 'afterschool' },
-  { id: 'c16', name: 'Read 20 minutes', amount: 0.5, emoji: '📖', category: 'afterschool' },
-  { id: 'c4', name: 'Set table', amount: 0.5, emoji: '🍽️', category: 'evening' },
-  { id: 'c11', name: 'Clear table after dinner', amount: 0.5, emoji: '🍽️', category: 'evening' },
-  { id: 'c10', name: 'Slept in own bed', amount: 0.5, emoji: '😴', category: 'evening' },
-  { id: 'c15', name: 'Help unload dishwasher', amount: 0.5, emoji: '🍽️', category: 'evening' },
-  { id: 'c2', name: 'Take out trash', amount: 1, emoji: '🗑️', category: 'general' },
-  { id: 'c7', name: 'Take out recycling', amount: 0.5, emoji: '♻️', category: 'general' },
-  { id: 'c3', name: 'Clean room', amount: 1.5, emoji: '🧹', category: 'general' },
-  { id: 'c9', name: 'Clean up toys', amount: 0.5, emoji: '🪀', category: 'general' },
-  { id: 'c5', name: 'Put away toys', amount: 0.5, emoji: '🧸', category: 'general' },
-  { id: 'c6', name: 'Laundry (fold & put away)', amount: 1, emoji: '👕', category: 'general' },
-  { id: 'c17', name: 'Off the iPad without whining', amount: 0.5, emoji: '📱', category: 'general' },
-  { id: 'c18', name: 'Set the Shabbos table', amount: 1, emoji: '🕯️', category: 'erevshabbos' },
-  { id: 'c19', name: 'Set out plates & cutlery', amount: 0.5, emoji: '🍴', category: 'erevshabbos' },
-  { id: 'c20', name: "Set up Mommy's candles", amount: 0.5, emoji: '🕎', category: 'erevshabbos' },
-  { id: 'c21', name: 'Shower & ready on time for Shabbos', amount: 1, emoji: '🚿', category: 'erevshabbos' },
+  { id: 'c1', name: 'Make bed', amount: 0.75, emoji: '🛏️', category: 'morning' },
+  { id: 'c13', name: 'Brush teeth morning & night', amount: 0.38, emoji: '🪥', category: 'morning' },
+  { id: 'c14', name: 'Get dressed & ready on time', amount: 0.75, emoji: '👔', category: 'morning' },
+  { id: 'c8', name: 'Homework right after school', amount: 1.5, emoji: '📚', category: 'afterschool' },
+  { id: 'c12', name: 'Put shoes & backpack away', amount: 0.38, emoji: '🎒', category: 'afterschool' },
+  { id: 'c16', name: 'Read 20 minutes', amount: 0.75, emoji: '📖', category: 'afterschool' },
+  { id: 'c4', name: 'Set table', amount: 0.75, emoji: '🍽️', category: 'evening' },
+  { id: 'c11', name: 'Clear table after dinner', amount: 0.75, emoji: '🍽️', category: 'evening' },
+  { id: 'c10', name: 'Slept in own bed', amount: 0.75, emoji: '😴', category: 'evening' },
+  { id: 'c15', name: 'Help unload dishwasher', amount: 0.75, emoji: '🍽️', category: 'evening' },
+  { id: 'c2', name: 'Take out trash', amount: 1.5, emoji: '🗑️', category: 'general' },
+  { id: 'c7', name: 'Take out recycling', amount: 0.75, emoji: '♻️', category: 'general' },
+  { id: 'c3', name: 'Clean room', amount: 2.25, emoji: '🧹', category: 'general' },
+  { id: 'c9', name: 'Clean up toys', amount: 0.75, emoji: '🪀', category: 'general' },
+  { id: 'c5', name: 'Put away toys', amount: 0.75, emoji: '🧸', category: 'general' },
+  { id: 'c6', name: 'Laundry (fold & put away)', amount: 1.5, emoji: '👕', category: 'general' },
+  { id: 'c17', name: 'Off the iPad without whining', amount: 0.75, emoji: '📱', category: 'general' },
+  { id: 'c18', name: 'Set the Shabbos table', amount: 1.5, emoji: '🕯️', category: 'erevshabbos' },
+  { id: 'c19', name: 'Set out plates & cutlery', amount: 0.75, emoji: '🍴', category: 'erevshabbos' },
+  { id: 'c20', name: "Set up Mommy's candles", amount: 0.75, emoji: '🕎', category: 'erevshabbos' },
+  { id: 'c21', name: 'Shower & ready on time for Shabbos', amount: 1.5, emoji: '🚿', category: 'erevshabbos' },
 ];
 const CATEGORY_BY_NAME = Object.fromEntries(
   DEFAULT_CHORES.map(c => [c.name.trim().toLowerCase(), c.category])
@@ -472,6 +472,14 @@ function migrateChores(s){
     for (const c of (s.chores || [])) {
       const amt = Number(c.amount);
       if (Number.isFinite(amt)) c.amount = Math.round(amt * 100 / 2) / 100;
+    }
+  }
+
+  // v6: raise to 75% of the original prices (current halved amounts x1.5).
+  if (ver < 6) {
+    for (const c of (s.chores || [])) {
+      const amt = Number(c.amount);
+      if (Number.isFinite(amt)) c.amount = Math.round(amt * 150) / 100;
     }
   }
 
