@@ -856,14 +856,20 @@ function renderChores(){
     if (!items.length) return '';
     const collapsed = isCategoryCollapsed(cat.id);
     const weekKeys = new Set(weekDayKeys());
-    const doneCount = items.filter(c => state.entries.some(e =>
-      e.kidId===kidId && e.type==='chore' && e.choreId===c.id && weekKeys.has(localDateKey(e.ts))
-    )).length;
+    let doneCount = 0, possible = 0;
+    for (const c of items) {
+      const days = new Set(state.entries.filter(e =>
+        e.kidId===kidId && e.type==='chore' && e.choreId===c.id && weekKeys.has(localDateKey(e.ts))
+      ).map(e => localDateKey(e.ts)));
+      const max = c.category === 'erevshabbos' ? 1 : 7;
+      doneCount += Math.min(days.size, max);
+      possible += max;
+    }
     return `<div class="cat-section ${collapsed?'collapsed':''}" data-cat="${cat.id}">
       <button type="button" class="cat-header" data-toggle-cat="${cat.id}" aria-expanded="${!collapsed}">
         <span class="cat-emoji">${cat.emoji}</span>
         <span class="cat-title">${escapeHtml(cat.name)}</span>
-        <span class="cat-progress">${doneCount}/${items.length} this week</span>
+        <span class="cat-progress">${doneCount}/${possible} this week</span>
         <span class="cat-chevron">▼</span>
       </button>
       <div class="cat-body">${items.map(c => choreItemHtml(c, kidId)).join('')}</div>
