@@ -292,12 +292,23 @@ button { cursor: pointer; border: none; background: none; }
 .chore-item .day-dots { width: 100%; padding-left: 56px; /* align under meta past emoji */ }
 .chore-item.done-week { background: #F0FDF4; }
 .chore-check, .chore-count-badge, .chore-done-label { display: none !important; } /* replaced by day dots */
+
+.sync-banner { background: #EEF2FF; color: var(--primary-dark); border-radius: 14px; padding: 12px 14px; font-weight: 600;
+  font-size: .9rem; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }
+.sync-banner-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.sync-banner-actions .btn { min-height: 40px; padding: 8px 14px; font-size: .9rem; }
+.sync-status { font-size: .72rem; font-weight: 700; color: var(--muted); margin-top: 2px; line-height: 1.2; }
+.sync-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: #94A3B8; vertical-align: middle; }
+.sync-dot.ok { background: var(--accent); }
+.sync-dot.pending { background: var(--primary); }
+.sync-dot.offline, .sync-dot.warn, .sync-dot.setup, .sync-dot.wait { background: var(--warn); }
+.sync-dot.error, .sync-dot.err { background: var(--danger); }
 </style>
 </head>
 <body>
 <div class="app" id="app">
   <div class="header">
-    <div class="logo"><div class="logo-badge">✨</div><span>Chore Tracker</span></div>
+    <div class="logo"><div class="logo-badge">✨</div><div><span>Chore Tracker</span><div class="sync-status hidden" id="syncStatus"></div></div></div>
     <div style="display:flex;gap:8px">
       <button class="icon-btn" id="btnRefresh" title="Refresh app" aria-label="Refresh app">↻</button>
       <button class="icon-btn" id="btnMenu" title="Menu" aria-label="Menu">☰</button>
@@ -307,6 +318,11 @@ button { cursor: pointer; border: none; background: none; }
   <div id="lockBanner" class="lock-banner hidden">
     <span>🔒 Editing locked</span>
     <button class="linkish" id="btnUnlock" style="color:#92400E">Unlock</button>
+  </div>
+
+  <div id="syncBanner" class="sync-banner hidden">
+    <div id="syncBannerText"></div>
+    <div class="sync-banner-actions" id="syncBannerActions"></div>
   </div>
 
   <div class="kid-switcher" id="kidSwitcher"></div>
@@ -508,7 +524,594 @@ function saveState(){
     }
     throw err;
   }
+  if (typeof scheduleSyncPush === 'function') scheduleSyncPush();
 }
+
+/* ---------- Family sync ---------- */
+// Fill these in after the Supabase project exists. Use the public anon key
+// only — never the service_role key. FAMILY_ID may be left blank; each phone
+// can then enter or generate the long family code in Settings so it is not
+// stored in the public GitHub repo.
+const SUPABASE_URL = '';
+const SUPABASE_ANON_KEY = '';
+const FAMILY_ID = '';
+const SYNC_META_KEY = 'chore-tracker-sync-meta-v1';
+const FAMILY_ID_STORAGE_KEY = 'chore-tracker-family-id';
+const SYNC_POLL_MS = 15000;
+
+let applyingRemote = false;
+let syncLinked = false;
+let lastRemoteUpdatedAt = null;
+let lastSyncedPayload = null;
+let syncPushTimer = null;
+let syncPollTimer = null;
+let syncRealtime = null;
+let syncBannerDismissed = false;
+
+function supabaseConfigured(){
+  return !!(String(SUPABASE_URL || '').trim() && String(SUPABASE_ANON_KEY || '').trim());
+}
+function getFamilyId(){
+  const hard = String(FAMILY_ID || '').trim();
+  if (hard) return hard;
+  try { return String(localStorage.getItem(FAMILY_ID_STORAGE_KEY) || '').trim(); }
+  catch(e){ return ''; }
+}
+function setFamilyIdLocal(id){
+  try {
+    if (id) localStorage.setItem(FAMILY_ID_STORAGE_KEY, id);
+    else localStorage.removeItem(FAMILY_ID_STORAGE_KEY);
+  } catch(e){}
+}
+function syncReady(){ return supabaseConfigured() && getFamilyId().length >= 24; }
+
+function generateFamilyId(){
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, b => b.toString(16).padStart(2,'0')).join('');
+}
+
+function loadSyncMeta(){
+  try {
+    const raw = localStorage.getItem(SYNC_META_KEY);
+    if (!raw) return;
+    const m = JSON.parse(raw);
+    syncLinked = !!m.linked;
+    lastRemoteUpdatedAt = m.lastRemoteUpdatedAt || null;
+    lastSyncedPayload = m.lastSyncedPayload || null;
+    syncBannerDismissed = !!m.bannerDismissed;
+  } catch(e){}
+}
+function saveSyncMeta(){
+  try {
+    localStorage.setItem(SYNC_META_KEY, JSON.stringify({
+      linked: syncLinked,
+      lastRemoteUpdatedAt,
+      lastSyncedPayload,
+      bannerDismissed: syncBannerDismissed,
+    }));
+  } catch(e){}
+}
+
+function payloadForSync(s){
+  const copy = JSON.parse(JSON.stringify(s || {}));
+  delete copy.selectedKidId;
+  delete copy.collapsedCategories;
+  return copy;
+}
+function payloadsEqual(a, b){
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+function hasMeaningfulLocalData(s){
+  if (!s) return false;
+  if ((s.entries && s.entries.length) || (s.goals && s.goals.length) || s.pinHash) return true;
+  const defaultKidNames = DEFAULT_KIDS.map(k => k.name).join('\0');
+  const kidNames = (s.kids || []).map(k => k.name).join('\0');
+  if (kidNames !== defaultKidNames) return true;
+  if ((s.chores || []).length !== DEFAULT_CHORES.length) return true;
+  return false;
+}
+
+function normalizeIncomingState(incoming, keep){
+  const s = JSON.parse(JSON.stringify(incoming || {}));
+  if (!Array.isArray(s.kids)) s.kids = [];
+  if (!Array.isArray(s.chores)) s.chores = [];
+  if (!Array.isArray(s.entries)) s.entries = [];
+  if (!Array.isArray(s.goals)) s.goals = [];
+  if (!s.collapsedCategories || typeof s.collapsedCategories !== 'object') {
+    s.collapsedCategories = (keep && keep.collapsedCategories) || {};
+  }
+  if (keep && keep.selectedKidId && (s.kids || []).some(k => k.id === keep.selectedKidId)) {
+    s.selectedKidId = keep.selectedKidId;
+  } else if (!s.selectedKidId && s.kids[0]) {
+    s.selectedKidId = s.kids[0].id;
+  }
+  if (s.choresDataVersion == null) s.choresDataVersion = 0;
+  migrateChores(s);
+  return s;
+}
+
+function setSyncStatus(kind, text){
+  const el = document.getElementById('syncStatus');
+  if (!el) return;
+  if (!kind || kind === 'off' || kind === 'hidden') {
+    el.classList.add('hidden');
+    el.innerHTML = '';
+    return;
+  }
+  const labels = {
+    ok: 'Synced',
+    pending: 'Syncing…',
+    offline: 'Offline — will sync later',
+    error: 'Sync error',
+    setup: 'Sync not set up',
+    wait: 'Waiting to share',
+  };
+  el.classList.remove('hidden');
+  el.innerHTML = `<span class="sync-dot ${kind}"></span>${escapeHtml(text || labels[kind] || '')}`;
+}
+
+async function syncRpc(name, args){
+  const res = await fetch(`${SUPABASE_URL.replace(/\/$/,'')}/rest/v1/rpc/${name}`, {
+    method: 'POST',
+    headers: {
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(args),
+  });
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch(e){ data = text; }
+  if (!res.ok) {
+    const msg = (data && (data.message || data.error || data.hint)) || text || ('HTTP ' + res.status);
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+async function getRemote(){
+  const data = await syncRpc('get_family_state', { p_family_id: getFamilyId() });
+  if (!data || !data.found) return null;
+  return { state: data.state, updated_at: data.updated_at };
+}
+
+function mergeById(localArr, remoteArr, lastArr){
+  const local = Array.isArray(localArr) ? localArr : [];
+  const remote = Array.isArray(remoteArr) ? remoteArr : [];
+  const lastIds = new Set((Array.isArray(lastArr) ? lastArr : []).map(x => x && x.id).filter(Boolean));
+  const localIds = new Set(local.map(x => x && x.id).filter(Boolean));
+  const out = [];
+  const seen = new Set();
+  for (const item of local) {
+    if (!item || !item.id || seen.has(item.id)) continue;
+    out.push(item);
+    seen.add(item.id);
+  }
+  for (const item of remote) {
+    if (!item || !item.id || seen.has(item.id)) continue;
+    if (lastIds.has(item.id) && !localIds.has(item.id)) continue; // deleted locally
+    out.push(item);
+    seen.add(item.id);
+  }
+  return out;
+}
+function sideChanged(side, base, key){
+  return JSON.stringify((side || {})[key]) !== JSON.stringify((base || {})[key]);
+}
+function mergePayloads(local, remote, base){
+  const merged = JSON.parse(JSON.stringify(remote || {}));
+  merged.entries = mergeById(local.entries, remote.entries, base && base.entries);
+  merged.goals = mergeById(local.goals, remote.goals, base && base.goals);
+  for (const key of ['kids', 'chores', 'pinHash', 'choresDataVersion']) {
+    const lChange = sideChanged(local, base, key);
+    const rChange = sideChanged(remote, base, key);
+    if (lChange && !rChange) merged[key] = local[key];
+    else if (rChange && !lChange) merged[key] = remote[key];
+    else if (lChange && rChange) merged[key] = local[key];
+  }
+  return merged;
+}
+
+function applyIncomingState(incoming, remoteUpdatedAt, toastMsg){
+  applyingRemote = true;
+  const keep = { selectedKidId: state.selectedKidId, collapsedCategories: state.collapsedCategories };
+  const prevPin = state.pinHash;
+  state = normalizeIncomingState(incoming, keep);
+  lastRemoteUpdatedAt = remoteUpdatedAt || lastRemoteUpdatedAt;
+  lastSyncedPayload = payloadForSync(state);
+  syncLinked = true;
+  saveSyncMeta();
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e){}
+  if (state.pinHash !== prevPin) unlocked = !state.pinHash;
+  applyingRemote = false;
+  render();
+  if (toastMsg) showToast(toastMsg);
+  setSyncStatus('ok');
+  hideSyncBanner();
+}
+
+function scheduleSyncPush(){
+  if (!syncLinked || !syncReady() || applyingRemote) return;
+  const payload = payloadForSync(state);
+  if (payloadsEqual(payload, lastSyncedPayload)) return;
+  clearTimeout(syncPushTimer);
+  setSyncStatus('pending');
+  syncPushTimer = setTimeout(() => { pushRemote().catch(()=>{}); }, 600);
+}
+
+async function pushRemote({ force = false, seedIfMissing = false } = {}){
+  if (!syncReady() || applyingRemote) return null;
+  const payload = payloadForSync(state);
+  if (!force && !seedIfMissing && payloadsEqual(payload, lastSyncedPayload)) {
+    setSyncStatus(syncLinked ? 'ok' : 'wait');
+    return { written: false, unchanged: true };
+  }
+  setSyncStatus('pending');
+  try {
+    let data = await syncRpc('push_family_state', {
+      p_family_id: getFamilyId(),
+      p_state: payload,
+      p_expected_updated_at: lastRemoteUpdatedAt,
+      p_force: !!force,
+    });
+    if (data && data.missing) {
+      if (seedIfMissing) return seedRemote();
+      setSyncStatus('wait', 'Waiting to share');
+      updateSyncBanner();
+      return data;
+    }
+    if (data && data.conflict && data.state) {
+      const merged = mergePayloads(payload, payloadForSync(normalizeIncomingState(data.state, null)), lastSyncedPayload);
+      data = await syncRpc('push_family_state', {
+        p_family_id: getFamilyId(),
+        p_state: merged,
+        p_expected_updated_at: data.updated_at,
+        p_force: true,
+      });
+      if (data && data.written) {
+        lastRemoteUpdatedAt = data.updated_at;
+        lastSyncedPayload = merged;
+        syncLinked = true;
+        saveSyncMeta();
+        applyingRemote = true;
+        const keep = { selectedKidId: state.selectedKidId, collapsedCategories: state.collapsedCategories };
+        state = normalizeIncomingState(merged, keep);
+        applyingRemote = false;
+        render();
+        await broadcastSync(data.updated_at);
+        setSyncStatus('ok');
+        return data;
+      }
+    }
+    if (data && data.written) {
+      lastRemoteUpdatedAt = data.updated_at;
+      lastSyncedPayload = payload;
+      syncLinked = true;
+      saveSyncMeta();
+      await broadcastSync(data.updated_at);
+      setSyncStatus('ok');
+    }
+    return data;
+  } catch (err) {
+    setSyncStatus('offline');
+    console.warn('sync push failed', err);
+    return null;
+  }
+}
+
+async function seedRemote(){
+  if (!syncReady()) return null;
+  setSyncStatus('pending');
+  try {
+    const payload = payloadForSync(state);
+    const data = await syncRpc('seed_family_state', {
+      p_family_id: getFamilyId(),
+      p_state: payload,
+    });
+    if (data && data.seeded) {
+      lastRemoteUpdatedAt = data.updated_at;
+      lastSyncedPayload = payload;
+      syncLinked = true;
+      saveSyncMeta();
+      await broadcastSync(data.updated_at);
+      setSyncStatus('ok');
+      hideSyncBanner();
+      showToast('This phone\'s data is now the family copy');
+      return data;
+    }
+    if (data && data.seeded === false) {
+      showToast('Family data already exists — use family data, or replace it from Settings');
+      updateSyncBanner();
+      return data;
+    }
+    return data;
+  } catch (err) {
+    setSyncStatus('error');
+    showToast('Could not upload this phone\'s data');
+    console.warn('sync seed failed', err);
+    return null;
+  }
+}
+
+async function pullAndReconcile({ silent = false } = {}){
+  if (!syncReady()) { updateSyncBanner(); return; }
+  try {
+    const row = await getRemote();
+    if (!row) {
+      setSyncStatus('wait', 'Waiting to share');
+      updateSyncBanner();
+      return;
+    }
+    const remotePayload = payloadForSync(normalizeIncomingState(row.state, null));
+    const localPayload = payloadForSync(state);
+    if (!syncLinked) {
+      if (!hasMeaningfulLocalData(state) || payloadsEqual(localPayload, remotePayload)) {
+        applyIncomingState(row.state, row.updated_at, silent ? null : 'Loaded family chores on this phone');
+      } else {
+        lastRemoteUpdatedAt = row.updated_at;
+        setSyncStatus('setup', 'Different data on this phone');
+        updateSyncBanner();
+      }
+      return;
+    }
+    if (payloadsEqual(localPayload, remotePayload)) {
+      lastRemoteUpdatedAt = row.updated_at;
+      lastSyncedPayload = localPayload;
+      saveSyncMeta();
+      setSyncStatus('ok');
+      hideSyncBanner();
+      return;
+    }
+    const localDirty = lastSyncedPayload && !payloadsEqual(localPayload, lastSyncedPayload);
+    const remoteNewer = row.updated_at !== lastRemoteUpdatedAt;
+    if (localDirty && remoteNewer) {
+      const merged = mergePayloads(localPayload, remotePayload, lastSyncedPayload);
+      applyingRemote = true;
+      const keep = { selectedKidId: state.selectedKidId, collapsedCategories: state.collapsedCategories };
+      state = normalizeIncomingState(merged, keep);
+      applyingRemote = false;
+      lastRemoteUpdatedAt = row.updated_at;
+      render();
+      await pushRemote({ force: true });
+      return;
+    }
+    if (localDirty && !remoteNewer) {
+      await pushRemote();
+      return;
+    }
+    applyIncomingState(row.state, row.updated_at, null);
+  } catch (err) {
+    setSyncStatus('offline');
+    if (!silent) console.warn('sync pull failed', err);
+  }
+}
+
+async function broadcastSync(updatedAt){
+  try {
+    if (syncRealtime) {
+      await syncRealtime.send({ type: 'broadcast', event: 'state-updated', payload: { updated_at: updatedAt } });
+    }
+  } catch(e){}
+}
+
+async function startRealtime(){
+  if (!syncReady()) return;
+  try {
+    let sb = window.supabase;
+    if (!sb) {
+      await new Promise((resolve) => {
+        const el = document.createElement('script');
+        el.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js';
+        el.onload = () => resolve();
+        el.onerror = () => resolve();
+        document.head.appendChild(el);
+      });
+      sb = window.supabase;
+    }
+    if (!sb || !sb.createClient) return;
+    const client = sb.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const channel = client.channel('family-sync-' + getFamilyId());
+    channel.on('broadcast', { event: 'state-updated' }, () => {
+      pullAndReconcile({ silent: true });
+    });
+    await channel.subscribe();
+    syncRealtime = channel;
+  } catch (err) {
+    console.warn('realtime unavailable, polling only', err);
+  }
+}
+
+function startSyncPolling(){
+  clearInterval(syncPollTimer);
+  syncPollTimer = setInterval(() => {
+    if (document.visibilityState === 'hidden') return;
+    pullAndReconcile({ silent: true });
+  }, SYNC_POLL_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') pullAndReconcile({ silent: true });
+  });
+  window.addEventListener('focus', () => pullAndReconcile({ silent: true }));
+}
+
+function hideSyncBanner(){
+  const el = document.getElementById('syncBanner');
+  if (el) el.classList.add('hidden');
+}
+function updateSyncBanner(){
+  const el = document.getElementById('syncBanner');
+  const text = document.getElementById('syncBannerText');
+  const actions = document.getElementById('syncBannerActions');
+  if (!el || !text || !actions) return;
+  const show = (msg, buttons) => {
+    el.classList.remove('hidden');
+    text.textContent = msg;
+    actions.innerHTML = '';
+    (buttons || []).forEach(b => {
+      const btn = document.createElement('button');
+      btn.className = b.primary ? 'btn btn-primary' : 'btn btn-outline';
+      if (b.primary) { btn.style.background = 'var(--primary)'; btn.style.color = '#fff'; }
+      btn.textContent = b.label;
+      btn.onclick = b.onClick;
+      actions.appendChild(btn);
+    });
+  };
+  if (!supabaseConfigured()) { hideSyncBanner(); return; }
+  if (syncLinked) { hideSyncBanner(); return; }
+  if (syncBannerDismissed) { hideSyncBanner(); return; }
+  if (!getFamilyId()) {
+    show('Family sync is ready. Open Settings to create or enter a family code so every phone shares the same chores.', [
+      { label: 'Open Settings', primary: true, onClick: () => requireUnlock(openFamilySyncModal) },
+    ]);
+    return;
+  }
+  if (!syncReady()) {
+    show('The family code on this phone looks too short. Open Settings and enter the full code.', [
+      { label: 'Open Settings', primary: true, onClick: () => requireUnlock(openFamilySyncModal) },
+    ]);
+    return;
+  }
+  show('This phone is not sharing yet. Upload this phone\'s data if it has the real chores, or use the family data if another phone already uploaded them.', [
+    { label: 'Upload this phone\'s data', primary: true, onClick: () => requireUnlock(async () => {
+        const row = await getRemote().catch(()=>null);
+        if (row) {
+          if (!confirm('Family data already exists. Upload this phone anyway and replace it?')) return;
+          syncLinked = true;
+          saveSyncMeta();
+          await pushRemote({ force: true, seedIfMissing: true });
+          hideSyncBanner();
+          showToast('This phone replaced the family copy');
+          return;
+        }
+        await seedRemote();
+      }) },
+    { label: 'Use family data', onClick: () => requireUnlock(async () => {
+        const row = await getRemote().catch(()=>null);
+        if (!row) { showToast('No family data yet — upload this phone first'); return; }
+        if (hasMeaningfulLocalData(state) && !confirm('Replace the chores on this phone with the shared family data? You can export a backup from Settings first.')) return;
+        applyIncomingState(row.state, row.updated_at, 'This phone now uses the family data');
+      }) },
+    { label: 'Not now', onClick: () => { syncBannerDismissed = true; saveSyncMeta(); hideSyncBanner(); } },
+  ]);
+}
+
+function openFamilySyncModal(){
+  const configured = supabaseConfigured();
+  const fid = getFamilyId();
+  const hardcoded = !!(FAMILY_ID && FAMILY_ID.trim());
+  openModal(`
+    <h2>Family sync</h2>
+    ${configured ? `
+      <p style="color:var(--muted);margin:0 0 12px;font-size:.95rem">
+        ${syncLinked ? 'This phone is sharing chores, check-offs, balances, goals, history, and the parent PIN with the family.' : 'Set a long family code, then upload this phone\'s data (the one with the real chores) first. Other phones enter the same code and use the family data.'}
+      </p>
+      <div class="field"><label>Family code</label>
+        <input id="syncFamilyId" type="text" autocomplete="off" spellcheck="false" ${hardcoded?'readonly':''} value="${escapeHtml(fid)}" placeholder="64-character code">
+      </div>
+      ${hardcoded ? '<p style="color:var(--muted);font-size:.85rem;margin:0 0 10px">This code is built into the app.</p>' : ''}
+      <div id="syncModalStatus" style="color:var(--muted);font-size:.9rem;margin:0 0 12px">${syncLinked ? 'Status: sharing across phones' : 'Status: not sharing yet'}</div>
+      <div class="modal-actions" style="flex-direction:column">
+        ${hardcoded ? '' : '<button class="btn btn-outline" id="mGenCode">Generate a new family code</button>'}
+        ${hardcoded ? '' : '<button class="btn btn-outline" id="mSaveCode">Save code on this phone</button>'}
+        <button class="btn btn-primary" id="mUpload" style="background:var(--primary);color:#fff">Upload this phone\'s data</button>
+        <button class="btn btn-outline" id="mAdopt">Use family data on this phone</button>
+        <button class="btn btn-outline" id="mSyncNow">Sync now</button>
+        <button class="btn btn-outline" id="mClose">Close</button>
+      </div>
+    ` : `
+      <p style="color:var(--muted);margin:0 0 12px;font-size:.95rem">Family sync is not connected yet. After the Supabase project is created, add the project URL and public anon key to the app, then come back here to create a family code and upload this phone\'s data.</p>
+      <div class="modal-actions"><button class="btn btn-outline" id="mClose">Close</button></div>
+    `}`);
+  document.getElementById('mClose').onclick = closeModal;
+  if (!configured) return;
+  const readCode = () => (document.getElementById('syncFamilyId') || {}).value.trim();
+  const mGen = document.getElementById('mGenCode');
+  const mSave = document.getElementById('mSaveCode');
+  if (mGen) mGen.onclick = () => {
+    if (syncLinked && !confirm('Generating a new code starts a separate family copy. Other phones will need the new code.')) return;
+    const next = generateFamilyId();
+    document.getElementById('syncFamilyId').value = next;
+    setFamilyIdLocal(next);
+    syncLinked = false;
+    lastRemoteUpdatedAt = null;
+    lastSyncedPayload = null;
+    syncBannerDismissed = false;
+    saveSyncMeta();
+    showToast('New family code saved on this phone — copy it to the other phones');
+  };
+  if (mSave) mSave.onclick = () => {
+    const code = readCode();
+    if (code.length < 24) { showToast('Enter the full family code (at least 24 characters)'); return; }
+    const prev = getFamilyId();
+    if (prev && prev !== code) {
+      syncLinked = false;
+      lastRemoteUpdatedAt = null;
+      lastSyncedPayload = null;
+      syncBannerDismissed = false;
+    }
+    setFamilyIdLocal(code);
+    saveSyncMeta();
+    showToast('Family code saved on this phone');
+    pullAndReconcile();
+  };
+  document.getElementById('mUpload').onclick = async () => {
+    const code = readCode();
+    if (code.length < 24) { showToast('Enter or generate a family code first'); return; }
+    if (!hardcoded) setFamilyIdLocal(code);
+    const row = await getRemote().catch(()=>null);
+    if (row && !confirm('This will replace the existing family copy with the data on this phone. Continue?')) return;
+    if (row) {
+      lastRemoteUpdatedAt = row.updated_at;
+      syncLinked = true;
+      saveSyncMeta();
+      const result = await pushRemote({ force: true });
+      if (result && result.written) { closeModal(); showToast('This phone replaced the family copy'); }
+    } else {
+      const result = await seedRemote();
+      if (result && result.seeded) closeModal();
+      else if (result && result.seeded === false) {
+        showToast('Family data already exists. Confirm replace, or use family data.');
+      }
+    }
+  };
+  document.getElementById('mAdopt').onclick = async () => {
+    const code = readCode();
+    if (code.length < 24) { showToast('Enter the family code first'); return; }
+    if (!hardcoded) setFamilyIdLocal(code);
+    const row = await getRemote().catch(()=>null);
+    if (!row) { showToast('No family data yet — upload it from the phone that has the real chores'); return; }
+    if (hasMeaningfulLocalData(state) && !confirm('Replace the chores on this phone with the shared family data? Export a backup first if you might need this phone\'s copy.')) return;
+    applyIncomingState(row.state, row.updated_at, 'This phone now uses the family data');
+    closeModal();
+  };
+  document.getElementById('mSyncNow').onclick = async () => {
+    if (!syncReady()) { showToast('Save a family code first'); return; }
+    await pullAndReconcile();
+    if (syncLinked) await pushRemote();
+    showToast('Sync finished');
+  };
+}
+
+async function initSync(){
+  loadSyncMeta();
+  if (!supabaseConfigured()) {
+    setSyncStatus('hidden');
+    return;
+  }
+  updateSyncBanner();
+  if (!syncReady()) {
+    setSyncStatus('setup');
+    return;
+  }
+  await pullAndReconcile({ silent: true });
+  startSyncPolling();
+  startRealtime();
+}
+
+
 
 function money(n){
   const v = Math.round((Number(n)||0)*100)/100;
@@ -1452,6 +2055,7 @@ function openMenu(){
     <div class="modal-actions" style="flex-direction:column">
       <button class="btn btn-outline" id="mEditKids">✏️ Edit kids</button>
       <button class="btn btn-outline" id="mPin">${state.pinHash?'🔐 Change / remove PIN':'🔐 Set parent PIN'}</button>
+      <button class="btn btn-outline" id="mSync">☁️ Family sync</button>
       <button class="btn btn-outline" id="mExport">⬇️ Export backup</button>
       <button class="btn btn-outline" id="mImport">⬆️ Import backup</button>
       <button class="btn btn-outline" id="mClose">Close</button>
@@ -1462,6 +2066,7 @@ function openMenu(){
     if (state.pinHash && !unlocked) { pendingPinAction = () => openPinSetup(); openPinModal('Enter current PIN'); }
     else openPinSetup();
   };
+  document.getElementById('mSync').onclick = () => requireUnlock(openFamilySyncModal);
   document.getElementById('mExport').onclick = exportBackup;
   document.getElementById('mImport').onclick = () => requireUnlock(openImport);
 }
@@ -1757,6 +2362,7 @@ document.getElementById('btnRefresh').onclick = () => checkForAppUpdate({ forceR
 })();
 
 render();
+initSync();
 </script>
 </body>
 </html>
